@@ -1,0 +1,5 @@
+# Obsolete files to ignore
+PLAN.md
+TASK.md
+patch.rs
+pipeline_patch.rs
