@@ -109,4 +109,17 @@ Errors use `thiserror` with `Error` enum and `Result<T>` alias. Some errors are 
 
 ## Testing
 
-Tests are inline in module files under `#[cfg(test)]` blocks. Use `cargo test` to run all tests. Development test scripts have been moved to the `scripts/` directory (`scripts/add_*_test.sh`, `scripts/fix_*.sh`) and can be used during development to add tests incrementally.
+PanMiner uses a combination of unit tests, integration tests, and development utilities for testing.
+
+### Unit Tests
+
+Unit tests are integrated directly in the source files under `#[cfg(test)]` blocks. Use `cargo test` to run all unit tests.
+
+### Integration Tests
+
+Integration tests are located in the `tests/` directory and test complete pipeline functionality.
+
+### Development Utilities
+
+Development scripts in the `scripts/` directory help with test generation and debugging.
+See `TESTING.md` for detailed testing instructions.
