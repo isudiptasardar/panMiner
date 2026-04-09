@@ -1,10 +1,11 @@
 //! Main pipeline orchestration for PanMiner.
 
 use rayon::prelude::*;
+use std::collections::HashMap;
 
 use crate::config::PanminerConfig;
 use crate::clustering::{Clusterer, CpuClusterer, MMseqsRunner};
-use crate::correction::{ContaminationRemover, FragmentMerger};
+use crate::correction::{ContaminationRemover, ContigEndPruner, FragmentMerger, MissingGeneRecoverer};
 use crate::error::{Error, Result};
 use crate::graph::{
     BitPackedMatrix, ConcurrentGraph, Gene, GeneCluster, Node, GenomeId, GraphBuilder, PangenomeGraph,
@@ -108,16 +109,6 @@ impl PanminerPipeline {
             concurrent_graph.node_count(),
             concurrent_graph.edge_count()
         );
-
-        // Phase 4.5: Missing gene recovery (optional)
-        // This step searches for genes that may have been missed during annotation
-        // It requires contig sequences which are not currently stored in the graph
-        // so it's disabled until contig sequence storage is implemented
-        // Uncomment the following lines to enable when contig sequences are available:
-        /*
-        tracing::info!("Phase 4.5: Running missing gene recovery");
-        self.run_missing_gene_recovery(&concurrent_graph)?;
-        */
 
         // Phase 5: Build presence/absence matrix
         tracing::info!("Phase 5: Building presence/absence matrix");
@@ -260,6 +251,11 @@ impl PanminerPipeline {
         let remover = ContaminationRemover::from_mode(&self.config.mode, num_genomes);
         remover.remove(graph)?;
 
+        // Contig-end pruning
+        let pruner = ContigEndPruner::new()
+            .with_min_support(self.config.min_support);
+        pruner.prune(graph)?;
+
         // Fragment merging with actual cluster centroid sequences
         let merger = FragmentMerger::new()
             .with_collapse_threshold(self.config.collapse_threshold);
@@ -285,6 +281,13 @@ impl PanminerPipeline {
         merger.correct_mistranslations(graph, &sequences)?;
         merger.collapse_gene_families(graph, &sequences)?;
 
+        // Phase 4.5: Missing gene recovery (optional)
+        // This searches for genes that may have been missed during annotation
+        // by looking at flanking sequences around expected gene locations.
+        // It requires contig sequences to be stored in the graph nodes.
+        tracing::info!("Phase 4.5: Running missing gene recovery");
+        self.run_missing_gene_recovery(graph)?;
+
         Ok(())
     }
 
@@ -293,11 +296,57 @@ impl PanminerPipeline {
     /// This searches for genes that may have been missed during annotation
     /// by looking at flanking sequences around expected gene locations.
     ///
-    /// Note: This feature requires contig sequences to be stored in the graph,
-    /// which is not currently implemented. The method is a placeholder for future implementation.
-    fn run_missing_gene_recovery(&self, _graph: &ConcurrentGraph) -> Result<()> {
-        // TODO: Implement missing gene recovery when contig sequences are available
-        tracing::info!("Missing gene recovery: disabled (contig sequences not available)");
+    /// For each edge in the graph, checks if any genome is missing
+    /// one of the connected genes. If so, searches the contig sequences
+    /// for a match using k-mer based search.
+    fn run_missing_gene_recovery(&self, graph: &ConcurrentGraph) -> Result<()> {
+        // Extract cluster sequences from graph nodes
+        let cluster_sequences: HashMap<String, Vec<u8>> = graph
+            .nodes
+            .iter()
+            .filter_map(|entry| {
+                let cluster_id = entry.key().as_str().to_string();
+                let node = entry.value();
+                node.centroid_sequence.clone().map(|seq| (cluster_id, seq))
+            })
+            .collect();
+
+        if cluster_sequences.is_empty() {
+            tracing::info!("Missing gene recovery: no cluster sequences available");
+            return Ok(());
+        }
+
+        // Extract contig sequences from graph nodes
+        let mut contig_sequences: HashMap<String, Vec<u8>> = HashMap::new();
+        for entry in graph.nodes.iter() {
+            let node = entry.value();
+            for (contig_name, seq) in &node.contig_sequences {
+                contig_sequences.insert(format!("{}_{}", entry.key().as_str(), contig_name), seq.clone());
+            }
+        }
+
+        if contig_sequences.is_empty() {
+            tracing::info!("Missing gene recovery: no contig sequences available");
+            return Ok(());
+        }
+
+        tracing::info!(
+            "Missing gene recovery: {} cluster sequences, {} contig sequences",
+            cluster_sequences.len(),
+            contig_sequences.len()
+        );
+
+        // Perform missing gene recovery
+        let recoverer = MissingGeneRecoverer::new()
+            .with_min_identity(0.70)
+            .with_search_window(5000);
+
+        let stats = recoverer.recover(graph, &contig_sequences, &cluster_sequences)?;
+        tracing::info!(
+            "Missing gene recovery: {} genes recovered",
+            stats.genes_recovered
+        );
+
         Ok(())
     }
 

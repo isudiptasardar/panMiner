@@ -6,9 +6,11 @@
 //! - Missing gene recovery
 
 mod contamination;
+mod contig_end;
 mod fragment;
 mod missing;
 
 pub use contamination::ContaminationRemover;
+pub use contig_end::{ContigEndPruner, PruningStats};
 pub use fragment::{FragmentMerger, MergeStats};
 pub use missing::{MissingGeneRecoverer, RecoveryStats};
