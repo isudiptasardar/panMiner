@@ -54,6 +54,33 @@ impl GraphBuilder {
             .map(|g| (g.id.to_string(), g.genome_id.clone()))
             .collect();
 
+        // Group genes by genome and contig for contig sequence collection
+        let genes_by_contig: HashMap<(GenomeId, String), Vec<&Gene>> = genes
+            .iter()
+            .fold(HashMap::new(), |mut acc, gene| {
+                let key = (gene.genome_id.clone(), gene.contig.clone());
+                acc.entry(key).or_default().push(gene);
+                acc
+            });
+
+        // Count genes per (genome, contig) for contig-end marking
+        let contig_gene_count: HashMap<(GenomeId, String), usize> = genes_by_contig
+            .iter()
+            .map(|((genome, contig), genes)| ((genome.clone(), contig.clone()), genes.len()))
+            .collect();
+
+        // Extract contig sequences
+        let contig_sequences: HashMap<(GenomeId, String), Vec<u8>> = genes_by_contig
+            .iter()
+            .map(|((genome, contig), genes)| {
+                let mut seq = Vec::new();
+                for g in genes {
+                    seq.extend(&g.sequence);
+                }
+                ((genome.clone(), contig.clone()), seq)
+            })
+            .collect();
+
         // Add nodes from clusters (parallel)
         clusters.par_iter().for_each(|cluster| {
             let mut node = Node::from_cluster(cluster);
@@ -62,17 +89,20 @@ impl GraphBuilder {
                     node.genomes.insert(genome_id.clone());
                 }
             }
+            // Add contig sequences if available and mark contig ends
+            for ((genome, contig), seq) in &contig_sequences {
+                if node.genomes.contains(genome) {
+                    node.add_contig_sequence(contig.clone(), seq.clone());
+                    // Mark as contig end if this node represents the only gene on its contig
+                    if let Some(genome_id) = node.genomes.iter().next() {
+                        if contig_gene_count.get(&(genome_id.clone(), contig.clone())).map(|c| *c == 1).unwrap_or(false) {
+                            node.is_contig_end = true;
+                        }
+                    }
+                }
+            }
             graph.add_node(node);
         });
-
-        // Group genes by genome and contig
-        let genes_by_contig: HashMap<(GenomeId, String), Vec<&Gene>> = genes
-            .iter()
-            .fold(HashMap::new(), |mut acc, gene| {
-                let key = (gene.genome_id.clone(), gene.contig.clone());
-                acc.entry(key).or_default().push(gene);
-                acc
-            });
 
         // Build edges from adjacencies (parallel)
         genes_by_contig
