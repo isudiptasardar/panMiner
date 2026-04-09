@@ -50,6 +50,24 @@ install_rust() {
     info "Rust installed via rustup."
 }
 
+# ── GPU Detection ────────────────────────────────────────────────────
+
+check_gpu() {
+    # Check if nvidia-smi is available and reports a GPU
+    if command -v nvidia-smi &>/dev/null; then
+        # Query GPU names - returns CSV with header "name" and GPU names below
+        if nvidia-smi --query-gpu=name --format=csv 2>/dev/null | grep -q .; then
+            # Check if output has more than just the header
+            local gpu_count=$(nvidia-smi --query-gpu=name --format=csv 2>/dev/null | tail -n +2 | grep -c .)
+            if [[ $gpu_count -gt 0 ]]; then
+                info "NVIDIA GPU detected"
+                return 0
+            fi
+        fi
+    fi
+    return 1
+}
+
 check_mmseqs2() {
     if command -v mmseqs &>/dev/null; then
         local version=$(mmseqs version 2>/dev/null | head -1 || echo "unknown")
@@ -62,20 +80,43 @@ check_mmseqs2() {
 install_mmseqs2() {
     if check_mmseqs2; then return 0; fi
 
-    warn "MMseqs2 not found (optional — built-in CPU clustering will be used)."
+    # Check if we should skip MMseqs2 or GPU detection
+    if [[ "${PANMINER_NO_MMSEQS2:-}" == "1" ]]; then
+        info "MMseqs2 skipped (PANMINER_NO_MMSEQS2=1). Built-in CPU clustering will be used."
+        return 0
+    fi
 
-    if command -v conda &>/dev/null; then
-        read -p "Install MMseqs2 via conda? [y/N] " -n 1 -r
-        echo
-        if [[ $REPLY =~ ^[Yy]$ ]]; then
-            conda install -y -c bioconda mmseqs2
-            info "MMseqs2 installed."
+    # Check for GPU and decide if we should prompt for MMseqs2
+    local gpu_detected=false
+    if [[ "${PANMINER_NO_GPU:-}" != "1" ]] && check_gpu 2>/dev/null; then
+        gpu_detected=true
+    fi
+
+    # If GPU detected, offer GPU version; otherwise offer CPU version or skip
+    if [[ "$gpu_detected" == "true" ]]; then
+        info "NVIDIA GPU detected. GPU-accelerated clustering will be available."
+        if command -v conda &>/dev/null; then
+            read -p "Install MMseqs2 with GPU support via conda? [y/N] " -n 1 -r
+            echo
+            if [[ $REPLY =~ ^[Yy]$ ]]; then
+                conda install -y -c bioconda mmseqs2
+                info "MMseqs2 with GPU support installed."
+                return 0
+            fi
         fi
     else
-        info "To install MMseqs2 later:"
-        info "  conda install -c bioconda mmseqs2"
-        info "  or visit: https://github.com/soedinglab/MMseqs2"
+        if command -v conda &>/dev/null; then
+            read -p "Install MMseqs2 (CPU version) via conda? [y/N] " -n 1 -r
+            echo
+            if [[ $REPLY =~ ^[Yy]$ ]]; then
+                conda install -y -c bioconda mmseqs2
+                info "MMseqs2 installed."
+                return 0
+            fi
+        fi
     fi
+
+    info "MMseqs2 not installed. Built-in CPU clustering will be used."
 }
 
 # ── Build ───────────────────────────────────────────────────────────
@@ -138,7 +179,38 @@ uninstall() {
 # ── Main ─────────────────────────────────────────────────────────────
 
 main() {
-    local mode="${1:-install}"
+    # Parse arguments for flags first
+    local no_gpu=false
+    local no_mmseqs2=false
+    local mode="install"
+
+    for arg in "$@"; do
+        case "$arg" in
+            --no-gpu)
+                no_gpu=true
+                ;;
+            --no-mmseqs2)
+                no_mmseqs2=true
+                ;;
+            --dev)
+                mode="dev"
+                ;;
+            --uninstall)
+                mode="uninstall"
+                ;;
+            --help|-h)
+                mode="help"
+                ;;
+        esac
+    done
+
+    # Set environment variables for subfunctions based on flags
+    if [[ "$no_gpu" == "true" ]]; then
+        export PANMINER_NO_GPU=1
+    fi
+    if [[ "$no_mmseqs2" == "true" ]]; then
+        export PANMINER_NO_MMSEQS2=1
+    fi
 
     case "$mode" in
         --dev)
@@ -157,6 +229,8 @@ main() {
             echo "  (no option)    Build release and install"
             echo "  --dev           Build debug and install"
             echo "  --uninstall     Remove PanMiner"
+            echo "  --no-gpu        Skip GPU detection and MMseqs2 GPU installation"
+            echo "  --no-mmseqs2    Skip MMseqs2 installation entirely"
             echo "  --help          Show this help"
             ;;
         install|"")

@@ -93,10 +93,12 @@ pub struct PanminerConfig {
     // Clustering
     /// Identity threshold for initial clustering (default: 0.98)
     pub cluster_identity: f32,
-    /// Use MMseqs2 if available
-    pub use_mmseqs: bool,
+    /// Enable MMseqs2 clustering (default: true)
+    pub enable_mmseqs: bool,
     /// Path to MMseqs2 binary (None = auto-detect)
     pub mmseqs_path: Option<PathBuf>,
+    /// Prefer GPU acceleration when available (default: true)
+    pub prefer_gpu: bool,
 
     // Graph construction
     /// Minimum genome support for a cluster
@@ -139,8 +141,9 @@ impl Default for PanminerConfig {
             chunk_size: 100,
             compression_level: 3,
             cluster_identity: 0.98,
-            use_mmseqs: true,
+            enable_mmseqs: true,
             mmseqs_path: None,
+            prefer_gpu: true,
             min_support: 1,
             mode: CorrectionMode::Default,
             contamination_threshold: 2,
@@ -221,6 +224,18 @@ impl PanminerConfig {
         self
     }
 
+    /// Enable or disable MMseqs2 clustering.
+    pub fn with_enable_mmseqs(mut self, enable: bool) -> Self {
+        self.enable_mmseqs = enable;
+        self
+    }
+
+    /// Enable or disable GPU acceleration preference.
+    pub fn with_prefer_gpu(mut self, prefer: bool) -> Self {
+        self.prefer_gpu = prefer;
+        self
+    }
+
     /// Force CPU processing.
     pub fn force_cpu(mut self, force: bool) -> Self {
         self.force_cpu = force;
@@ -278,7 +293,7 @@ mod tests {
         let config = PanminerConfig::default();
         assert_eq!(config.cluster_identity, 0.98);
         assert_eq!(config.chunk_size, 100);
-        assert!(config.use_mmseqs);
+        assert!(config.enable_mmseqs);
     }
 
     #[test]

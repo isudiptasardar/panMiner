@@ -149,7 +149,7 @@ impl PanminerPipeline {
     /// Cluster genes using MMseqs2-GPU or CPU fallback.
     fn cluster_genes(&self, genes: &[Gene]) -> Result<Vec<GeneCluster>> {
         // Try MMseqs2 first
-        if self.config.use_mmseqs && !self.config.force_cpu {
+        if self.config.enable_mmseqs && !self.config.force_cpu {
             if let Some(runner) = MMseqsRunner::detect() {
                 tracing::info!("Using {} for clustering", runner.name());
                 return runner.cluster(genes, self.config.cluster_identity);

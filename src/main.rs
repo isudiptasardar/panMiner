@@ -39,6 +39,14 @@ struct Cli {
     #[arg(long)]
     force_cpu: bool,
 
+    /// Disable MMseqs2 clustering
+    #[arg(long)]
+    no_mmseqs2: bool,
+
+    /// Disable GPU detection and acceleration
+    #[arg(long)]
+    no_gpu: bool,
+
     /// Path to MMseqs2 binary
     #[arg(long)]
     mmseqs_path: Option<PathBuf>,
@@ -99,7 +107,9 @@ fn main() -> anyhow::Result<()> {
         .with_chunk_size(cli.chunk_size)
         .with_mode(parse_mode(&cli.mode))
         .with_outputs(parse_formats(&cli.formats))
-        .force_cpu(cli.force_cpu);
+        .force_cpu(cli.force_cpu)
+        .with_enable_mmseqs(!cli.no_mmseqs2)
+        .with_prefer_gpu(!cli.no_gpu);
 
     // Validate
     config.validate()?;

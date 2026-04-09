@@ -68,6 +68,31 @@ impl MMseqsRunner {
             .unwrap_or(false)
     }
 
+    /// Check if GPU is available on the system.
+    /// Returns true if nvidia-smi is available and reports a GPU.
+    pub fn check_system_gpu() -> bool {
+        // First check if nvidia-smi is available
+        let nvidia_smi = match which::which("nvidia-smi").ok() {
+            Some(path) => path,
+            None => return false,
+        };
+        let output = match Command::new(nvidia_smi)
+            .arg("--query-gpu=name")
+            .arg("--format=csv")
+            .output()
+        {
+            Ok(out) => out,
+            Err(_) => return false,
+        };
+
+        // Check if any GPU is reported (non-empty output beyond header)
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        // The CSV output has a header "name" and then GPU names, one per line
+        // If there's at least one actual GPU entry (line after header), GPU is available
+        let lines: Vec<&str> = stdout.trim().split('\n').collect();
+        !lines.is_empty() && (lines.len() > 1 || !lines[0].is_empty())
+    }
+
     /// Check if GPU is available for this runner.
     pub fn has_gpu(&self) -> bool {
         self.use_gpu

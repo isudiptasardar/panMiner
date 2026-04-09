@@ -57,6 +57,27 @@ cargo build --release
 cargo install --path .
 ```
 
+### Installation Script (Recommended)
+
+PanMiner includes an installation script that automatically detects your system and installs dependencies:
+
+```bash
+# Basic installation
+bash install.sh
+
+# With options
+bash install.sh --dev           # Build in debug mode
+bash install.sh --no-gpu        # Skip GPU detection and MMseqs2 installation
+bash install.sh --no-mmseqs2    # Skip MMseqs2 installation entirely
+bash install.sh --uninstall     # Remove PanMiner
+```
+
+The installation script will:
+- Check for Rust and install if needed
+- Detect NVIDIA GPUs automatically
+- Prompt to install MMseqs2 with GPU support if a GPU is found
+- Build and install PanMiner
+
 ### External Tool Installation (Optional)
 
 **MMseqs2** (for GPU-accelerated clustering):
@@ -68,7 +89,7 @@ conda install -c bioconda mmseqs2
 # Or download from https://github.com/soedinglab/MMseqs2
 ```
 
-**Note**: PanMiner automatically detects MMseqs2. If not installed, it falls back to CPU-based greedy clustering.
+**Note**: PanMiner automatically detects MMseqs2 and NVIDIA GPUs. If MMseqs2 is not installed, it falls back to CPU-based greedy clustering. Use `--no-gpu` or `--no-mmseqs2` to disable GPU/MMseqs2 features.
 
 ## Quick Start
 
@@ -94,6 +115,8 @@ panminer *.gff -o output --force-cpu
 | `--identity` | Clustering identity threshold (0.5-1.0) | `0.98` |
 | `--mode` | Correction mode: strict, default, sensitive | `default` |
 | `--force-cpu` | Disable GPU/MMseqs2 | `false` |
+| `--no-mmseqs2` | Disable MMseqs2 clustering | `false` |
+| `--no-gpu` | Disable GPU detection and acceleration | `false` |
 | `--mmseqs-path` | Path to MMseqs2 binary | Auto-detect |
 | `-v, --verbose` | Enable debug logging | `false` |
 | `--formats` | Output formats (comma-separated) | `matrix,alignment,graph` |
