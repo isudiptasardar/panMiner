@@ -2,6 +2,7 @@
 name = "panminer"
 version = "0.1.0"
 edition = "2021"
+rust-version = "1.70"
 authors = ["PanMiner Contributors"]
 license = "MIT"
 description = "A modern pangenome analysis tool with GPU and CPU support"
