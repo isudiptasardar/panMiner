@@ -6,7 +6,7 @@ use rayon::prelude::*;
 
 use crate::config::PanminerConfig;
 use crate::error::{Error, Result};
-use crate::graph::{Gene, GeneCluster, GenomeId, ClusterId, ConcurrentGraph};
+use crate::graph::{Gene, GeneCluster, GenomeId};
 use super::gff::GffParser;
 use super::compress::{write_compressed, read_compressed};
 
@@ -23,7 +23,6 @@ pub struct PartialGraph {
 
 /// Streaming pipeline for processing large datasets.
 pub struct StreamingPipeline {
-    config: PanminerConfig,
     chunk_size: usize,
     intermediate_dir: PathBuf,
 }
@@ -32,7 +31,7 @@ impl StreamingPipeline {
     pub fn new(config: PanminerConfig) -> Self {
         let chunk_size = config.chunk_size;
         let intermediate_dir = config.temp_dir.join("panminer_intermediate");
-        Self { config, chunk_size, intermediate_dir }
+        Self { chunk_size, intermediate_dir }
     }
 
     pub fn process_chunks_with_clusters(

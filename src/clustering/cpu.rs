@@ -1,7 +1,5 @@
 //! CPU-based gene clustering fallback.
 
-use rayon::prelude::*;
-
 use crate::error::Result;
 use crate::graph::{Gene, GeneCluster};
 use super::traits::Clusterer;
@@ -22,7 +20,8 @@ impl CpuClusterer {
     }
 
     /// Compute sequence identity between two sequences.
-pub fn simd_sequence_identity(a: &[u8], b: &[u8]) -> f32 {
+    /// TODO: Use actual SIMD intrinsics when available for better performance.
+    pub fn sequence_identity(a: &[u8], b: &[u8]) -> f32 {
     let min_len = a.len().min(b.len());
     if min_len == 0 {
         return 0.0;
@@ -59,7 +58,7 @@ pub fn simd_sequence_identity(a: &[u8], b: &[u8]) -> f32 {
             let best_match = centroids
                 .iter()
                 .enumerate()
-                .map(|(i, centroid)| (i, Self::simd_sequence_identity(centroid, &gene.sequence)))
+                .map(|(i, centroid)| (i, Self::sequence_identity(centroid, &gene.sequence)))
                 .filter(|(_, identity)| *identity >= identity_threshold)
                 .max_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
 
@@ -153,23 +152,23 @@ mod tests {
 }
 
 #[cfg(test)]
-mod simd_tests {
+mod sequence_identity_tests {
     use super::*;
 
     #[test]
-    fn test_simd_sequence_identity() {
+    fn test_sequence_identity() {
         let seq_a = b"ATCGATCGATCGATCGATCGATCGATCGATCG";
         let seq_b = b"ATCGATCGATCGATCGATCGATCGATCGATCG";
         let seq_c = b"ATCGATCGATCGATCGATCGATCGATCGAACG"; // 1 mismatch
 
-        assert_eq!(CpuClusterer::simd_sequence_identity(seq_a, seq_b), 1.0);
-        assert_eq!(CpuClusterer::simd_sequence_identity(seq_a, seq_c), 31.0 / 32.0);
+        assert_eq!(CpuClusterer::sequence_identity(seq_a, seq_b), 1.0);
+        assert_eq!(CpuClusterer::sequence_identity(seq_a, seq_c), 31.0 / 32.0);
 
         // Empty
-        assert_eq!(CpuClusterer::simd_sequence_identity(b"", b"A"), 0.0);
+        assert_eq!(CpuClusterer::sequence_identity(b"", b"A"), 0.0);
 
         // Different lengths
-        assert_eq!(CpuClusterer::simd_sequence_identity(b"ATCG", b"ATC"), 1.0); // limited by min_len
+        assert_eq!(CpuClusterer::sequence_identity(b"ATCG", b"ATC"), 1.0); // limited by min_len
     }
 }
 

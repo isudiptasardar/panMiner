@@ -94,6 +94,8 @@ impl CompressedReader<'static, File> {
 }
 
 /// Compress data to bytes.
+/// Used in tests. Public for potential external use.
+#[allow(dead_code)]
 pub fn compress(data: &[u8]) -> Result<Vec<u8>> {
     let mut encoder = Encoder::new(Vec::new(), DEFAULT_COMPRESSION_LEVEL)?;
     encoder.write_all(data)?;
@@ -101,6 +103,7 @@ pub fn compress(data: &[u8]) -> Result<Vec<u8>> {
 }
 
 /// Compress data with custom level.
+#[allow(dead_code)]
 pub fn compress_with_level(data: &[u8], level: i32) -> Result<Vec<u8>> {
     let mut encoder = Encoder::new(Vec::new(), level)?;
     encoder.write_all(data)?;
@@ -109,11 +112,13 @@ pub fn compress_with_level(data: &[u8], level: i32) -> Result<Vec<u8>> {
 
 /// Decompress data.
 /// Train a zstd dictionary from a list of samples.
+#[allow(dead_code)]
 pub fn train_dictionary(samples: &[Vec<u8>], dict_size: usize) -> Result<Vec<u8>> {
     Ok(zstd::dict::from_samples(samples, dict_size)?)
 }
 
 /// Compress data using a trained dictionary.
+#[allow(dead_code)]
 pub fn compress_with_dict(data: &[u8], level: i32, dict: &[u8]) -> Result<Vec<u8>> {
     let mut encoder = zstd::stream::Encoder::with_dictionary(Vec::new(), level, dict)?;
     encoder.write_all(data)?;
@@ -121,6 +126,7 @@ pub fn compress_with_dict(data: &[u8], level: i32, dict: &[u8]) -> Result<Vec<u8
 }
 
 /// Decompress data using a trained dictionary.
+#[allow(dead_code)]
 pub fn decompress_with_dict(data: &[u8], dict: &[u8]) -> Result<Vec<u8>> {
     let mut decoder = zstd::stream::Decoder::with_dictionary(data, dict)?;
     let mut decompressed = Vec::new();
@@ -128,6 +134,8 @@ pub fn decompress_with_dict(data: &[u8], dict: &[u8]) -> Result<Vec<u8>> {
     Ok(decompressed)
 }
 
+/// Decompress data.
+#[allow(dead_code)]
 pub fn decompress(data: &[u8]) -> Result<Vec<u8>> {
     let mut decoder = Decoder::new(data)?;
     let mut decompressed = Vec::new();
@@ -198,7 +206,7 @@ mod tests {
 
         assert_eq!(data.to_vec(), read);
     }
-}
+
     #[test]
     fn test_zstd_dictionary() {
         let mut samples = Vec::new();
@@ -207,19 +215,19 @@ mod tests {
         for i in 0..10000 {
             samples.push(format!("{{\"gene_id\":\"{}\",\"sequence\":\"ATCGATCGATCGATCGATCGATCGATCGATCG\"}}", i).into_bytes());
         }
-        
+
         let dict = train_dictionary(&samples, 32768).unwrap();
         assert!(dict.len() > 0);
-        
+
         let data = b"{\"gene_id\":\"126\",\"sequence\":\"ATCGATCGATCGATCGATCGATCGATCGATCG\"}";
-        
+
         let compressed = compress_with_dict(data, 3, &dict).unwrap();
         let decompressed = decompress_with_dict(&compressed, &dict).unwrap();
-        
+
         assert_eq!(decompressed, data);
-        
+
         // Dictionary compression should be very efficient for small repetitive strings
         let no_dict = compress(data).unwrap();
         assert!(compressed.len() < no_dict.len());
     }
-    
+}
