@@ -1,0 +1,1 @@
+rayon::iter::FlatMap<rayon::slice::Iter<'_, PartialGraph>, {closure@src\graph\concurrent.rs:193:23: 193:32}>

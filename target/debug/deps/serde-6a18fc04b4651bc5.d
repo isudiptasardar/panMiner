@@ -1,0 +1,14 @@
+S:\Projects\panaroo-gpu\target\debug\deps\serde-6a18fc04b4651bc5.d: C:\Users\Sudipta\ Sardar\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\serde-1.0.228\src\lib.rs C:\Users\Sudipta\ Sardar\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\serde-1.0.228\src\integer128.rs C:\Users\Sudipta\ Sardar\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\serde-1.0.228\src\private\mod.rs C:\Users\Sudipta\ Sardar\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\serde-1.0.228\src\private\de.rs C:\Users\Sudipta\ Sardar\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\serde-1.0.228\src\private\ser.rs S:\Projects\panaroo-gpu\target\debug\build\serde-c60288b323579d05\out/private.rs
+
+S:\Projects\panaroo-gpu\target\debug\deps\libserde-6a18fc04b4651bc5.rlib: C:\Users\Sudipta\ Sardar\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\serde-1.0.228\src\lib.rs C:\Users\Sudipta\ Sardar\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\serde-1.0.228\src\integer128.rs C:\Users\Sudipta\ Sardar\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\serde-1.0.228\src\private\mod.rs C:\Users\Sudipta\ Sardar\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\serde-1.0.228\src\private\de.rs C:\Users\Sudipta\ Sardar\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\serde-1.0.228\src\private\ser.rs S:\Projects\panaroo-gpu\target\debug\build\serde-c60288b323579d05\out/private.rs
+
+S:\Projects\panaroo-gpu\target\debug\deps\libserde-6a18fc04b4651bc5.rmeta: C:\Users\Sudipta\ Sardar\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\serde-1.0.228\src\lib.rs C:\Users\Sudipta\ Sardar\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\serde-1.0.228\src\integer128.rs C:\Users\Sudipta\ Sardar\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\serde-1.0.228\src\private\mod.rs C:\Users\Sudipta\ Sardar\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\serde-1.0.228\src\private\de.rs C:\Users\Sudipta\ Sardar\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\serde-1.0.228\src\private\ser.rs S:\Projects\panaroo-gpu\target\debug\build\serde-c60288b323579d05\out/private.rs
+
+C:\Users\Sudipta\ Sardar\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\serde-1.0.228\src\lib.rs:
+C:\Users\Sudipta\ Sardar\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\serde-1.0.228\src\integer128.rs:
+C:\Users\Sudipta\ Sardar\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\serde-1.0.228\src\private\mod.rs:
+C:\Users\Sudipta\ Sardar\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\serde-1.0.228\src\private\de.rs:
+C:\Users\Sudipta\ Sardar\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\serde-1.0.228\src\private\ser.rs:
+S:\Projects\panaroo-gpu\target\debug\build\serde-c60288b323579d05\out/private.rs:
+
+# env-dep:OUT_DIR=S:\\Projects\\panaroo-gpu\\target\\debug\\build\\serde-c60288b323579d05\\out

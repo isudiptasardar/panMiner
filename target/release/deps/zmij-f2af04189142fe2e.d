@@ -1,0 +1,9 @@
+S:\Projects\panaroo-gpu\target\release\deps\zmij-f2af04189142fe2e.d: C:\Users\Sudipta\ Sardar\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\zmij-1.0.21\src\lib.rs C:\Users\Sudipta\ Sardar\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\zmij-1.0.21\src\stdarch_x86.rs C:\Users\Sudipta\ Sardar\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\zmij-1.0.21\src\traits.rs
+
+S:\Projects\panaroo-gpu\target\release\deps\libzmij-f2af04189142fe2e.rlib: C:\Users\Sudipta\ Sardar\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\zmij-1.0.21\src\lib.rs C:\Users\Sudipta\ Sardar\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\zmij-1.0.21\src\stdarch_x86.rs C:\Users\Sudipta\ Sardar\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\zmij-1.0.21\src\traits.rs
+
+S:\Projects\panaroo-gpu\target\release\deps\libzmij-f2af04189142fe2e.rmeta: C:\Users\Sudipta\ Sardar\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\zmij-1.0.21\src\lib.rs C:\Users\Sudipta\ Sardar\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\zmij-1.0.21\src\stdarch_x86.rs C:\Users\Sudipta\ Sardar\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\zmij-1.0.21\src\traits.rs
+
+C:\Users\Sudipta\ Sardar\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\zmij-1.0.21\src\lib.rs:
+C:\Users\Sudipta\ Sardar\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\zmij-1.0.21\src\stdarch_x86.rs:
+C:\Users\Sudipta\ Sardar\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\zmij-1.0.21\src\traits.rs:
