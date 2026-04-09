@@ -1,0 +1,18 @@
+# Build artifacts
+target/
+
+# Local documentation (not for distribution)
+PLAN.md
+TASK.md
+TESTING.md
+CLAUDE.md
+Comparison.md
+Specs.md
+Architecture.md
+
+# Superpowers documentation
+docs/
+
+# Obsolete files (deleted, kept in .gitignore for safety)
+patch.rs
+pipeline_patch.rs

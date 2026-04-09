@@ -1,0 +1,15 @@
+name: panminer
+channels:
+  - bioconda
+  - conda-forge
+  - defaults
+dependencies:
+  # Build toolchain
+  - rust>=1.70
+  - cargo
+
+  # Optional: GPU-accelerated clustering (falls back to built-in CPU if absent)
+  - mmseqs2
+
+  # Development dependencies
+  - pytest    # for future Python bindings testing
