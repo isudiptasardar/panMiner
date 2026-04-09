@@ -1,22 +1,29 @@
 //! Output module for PanMiner.
 //!
-//! Generates multiple output formats from the pangenome graph:
-//! - Presence/absence matrix (CSV/TSV)
-//! - Core/accessory alignments (FASTA)
+//! Generates multiple output formats from the pangenome graph,
+//! following Panaroo/Roary naming conventions for compatibility:
+//! - Presence/absence matrix (CSV/TSV/Rtab)
+//! - Core/accessory alignments (ALN/FASTA)
 //! - GML graph format
+//! - Panaroo-style reference files (pan_genome_reference.fa, gene_data.csv)
 //! - JSON/JSONL
 //! - Parquet (optional)
+//! - Structural variant matrix (optional)
 //! - Interactive HTML visualization (optional)
 
 mod matrix;
 mod alignment;
 mod graph;
 mod json;
+mod struct_csv;
+pub mod qc_stats;
 
 pub use matrix::MatrixWriter;
 pub use alignment::AlignmentWriter;
 pub use graph::GmlWriter;
 pub use json::JsonWriter;
+pub use struct_csv::write_structural_variants;
+pub use qc_stats::{write_qc_stats, write_qc_summary};
 
 use std::path::PathBuf;
 
@@ -28,7 +35,6 @@ use crate::graph::BitPackedMatrix;
 /// Writes all requested output formats in parallel.
 pub struct OutputWriter {
     output_dir: PathBuf,
-    prefix: String,
     formats: Vec<OutputFormat>,
 }
 
@@ -37,7 +43,6 @@ impl OutputWriter {
     pub fn new(config: &PanminerConfig) -> Self {
         Self {
             output_dir: config.output_dir.clone(),
-            prefix: config.output_prefix.clone(),
             formats: config.outputs.iter().cloned().collect(),
         }
     }
@@ -58,37 +63,77 @@ impl OutputWriter {
 
         let mut paths = OutputPaths {
             output_dir: self.output_dir.clone(),
-            matrix: None,
+            matrix_csv: None,
+            matrix_rtab: None,
             alignment: None,
             graph: None,
+            reference_fasta: None,
+            gene_data: None,
+            dna_fasta: None,
+            protein_fasta: None,
             json: None,
+            jsonl: None,
+            struct_csv: None,
         };
 
         // Write formats (sequential for now to collect paths)
         for format in &self.formats {
             match format {
                 OutputFormat::Matrix => {
-                    let path = self.output_dir.join(format!("{}_gene_presence_absence.csv", self.prefix));
-                    MatrixWriter::write(matrix, &path)?;
-                    paths.matrix = Some(path);
-                    tracing::info!("Wrote presence/absence matrix");
+                    // Panaroo/Roary compatible CSV
+                    let csv_path = self.output_dir.join("gene_presence_absence.csv");
+                    MatrixWriter::write(matrix, &csv_path)?;
+                    paths.matrix_csv = Some(csv_path);
+                    tracing::info!("Wrote gene presence/absence matrix (CSV)");
+
+                    // Roary-compatible Rtab (binary TSV)
+                    let rtab_path = self.output_dir.join("gene_presence_absence.Rtab");
+                    MatrixWriter::write_tsv(matrix, &rtab_path)?;
+                    paths.matrix_rtab = Some(rtab_path);
+                    tracing::info!("Wrote gene presence/absence matrix (Rtab)");
                 }
                 OutputFormat::Alignment => {
-                    let path = self.output_dir.join(format!("{}_core_alignment.fasta", self.prefix));
-                    AlignmentWriter::write_core(graph, &path)?;
+                    // Panaroo naming: core_gene_alignment.aln
+                    let path = self.output_dir.join("core_gene_alignment.aln");
+                    let writer = AlignmentWriter::new();
+                    writer.write_core(graph, &path)?;
                     paths.alignment = Some(path);
                     tracing::info!("Wrote core alignment");
                 }
                 OutputFormat::Graph => {
-                    let path = self.output_dir.join(format!("{}_graph.gml", self.prefix));
+                    // Panaroo naming: final_graph.gml
+                    let path = self.output_dir.join("final_graph.gml");
                     GmlWriter::write(graph, &path)?;
                     paths.graph = Some(path);
-                    tracing::info!("Wrote GML graph");
+                    tracing::info!("Wrote final GML graph");
                 }
                 OutputFormat::Json => {
-                    let path = self.output_dir.join(format!("{}_pangenome.json", self.prefix));
-                    JsonWriter::write(graph, matrix, &path)?;
-                    paths.json = Some(path);
+                    // Panaroo-style JSON output with gene_data.csv and pan_genome_reference.fa
+                    let gene_data_path = self.output_dir.join("gene_data.csv");
+                    JsonWriter::write_gene_data(graph, &gene_data_path)?;
+                    paths.gene_data = Some(gene_data_path);
+                    tracing::info!("Wrote gene_data.csv");
+
+                    let reference_path = self.output_dir.join("pan_genome_reference.fa");
+                    JsonWriter::write_reference(graph, &reference_path)?;
+                    paths.reference_fasta = Some(reference_path);
+                    tracing::info!("Wrote pan_genome_reference.fa");
+
+                    // Combined FASTA files (DNA and protein)
+                    let dna_path = self.output_dir.join("combined_DNA_CDS.fasta");
+                    JsonWriter::write_dna_fasta(graph, &dna_path)?;
+                    paths.dna_fasta = Some(dna_path);
+                    tracing::info!("Wrote combined_DNA_CDS.fasta");
+
+                    let protein_path = self.output_dir.join("combined_protein_CDS.fasta");
+                    JsonWriter::write_protein_fasta(graph, &protein_path)?;
+                    paths.protein_fasta = Some(protein_path);
+                    tracing::info!("Wrote combined_protein_CDS.fasta");
+
+                    // JSON for programmatic access (different from Panaroo's JSON, but useful)
+                    let json_path = self.output_dir.join("_pangenome.json");
+                    JsonWriter::write_json(graph, &json_path)?;
+                    paths.json = Some(json_path);
                     tracing::info!("Wrote JSON output");
                 }
                 OutputFormat::Parquet => {
@@ -111,6 +156,13 @@ impl OutputWriter {
                         tracing::warn!("HTML visualization requires --features viz");
                     }
                 }
+                OutputFormat::Struct => {
+                    // Structural variant matrix
+                    let path = self.output_dir.join("struct_presence_absence.csv");
+                    JsonWriter::write_structural_variants(graph, &path)?;
+                    paths.struct_csv = Some(path);
+                    tracing::info!("Wrote structural variant matrix");
+                }
             }
         }
 
@@ -123,12 +175,26 @@ impl OutputWriter {
 pub struct OutputPaths {
     /// Output directory
     pub output_dir: PathBuf,
-    /// Presence/absence matrix
-    pub matrix: Option<PathBuf>,
-    /// Core alignment
+    /// Gene presence/absence matrix (CSV - Roary compatible)
+    pub matrix_csv: Option<PathBuf>,
+    /// Gene presence/absence matrix (Rtab - Roary compatible binary)
+    pub matrix_rtab: Option<PathBuf>,
+    /// Core gene alignment
     pub alignment: Option<PathBuf>,
-    /// GML graph
+    /// Final pangenome graph (GML)
     pub graph: Option<PathBuf>,
-    /// JSON output
+    /// Panaroo-style reference FASTA (all genes)
+    pub reference_fasta: Option<PathBuf>,
+    /// Gene data CSV (links gene sequences to annotations)
+    pub gene_data: Option<PathBuf>,
+    /// Combined DNA CDS FASTA
+    pub dna_fasta: Option<PathBuf>,
+    /// Combined protein CDS FASTA
+    pub protein_fasta: Option<PathBuf>,
+    /// JSON output (programmatic access)
     pub json: Option<PathBuf>,
+    /// JSONL streaming output
+    pub jsonl: Option<PathBuf>,
+    /// Structural variant matrix (CSV)
+    pub struct_csv: Option<PathBuf>,
 }

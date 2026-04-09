@@ -65,6 +65,7 @@ pyo3 = { version = "0.22", features = ["extension-module"], optional = true }
 
 # HTML templates (optional)
 tera = { version = "1.20", optional = true }
+tempfile = "3.10"
 
 [dev-dependencies]
 criterion = "0.5"

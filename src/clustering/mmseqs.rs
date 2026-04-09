@@ -103,15 +103,16 @@ impl MMseqsRunner {
         self.tmp_dir = path;
     }
 
-    /// Run MMseqs2 easy-cluster.
+    /// Run MMseqs2 easy-cluster and return the output directory path.
     ///
     /// This is a convenience method that runs the full clustering pipeline.
+    /// The actual parsing is done separately to access gene sequences for centroids.
     pub fn easy_cluster(
         &self,
         input: &Path,
         output: &Path,
         identity: f32,
-    ) -> Result<Vec<GeneCluster>> {
+    ) -> Result<PathBuf> {
         let mut cmd = Command::new(&self.path);
 
         cmd.arg("easy-cluster")
@@ -135,12 +136,11 @@ impl MMseqsRunner {
             return Err(Error::Mmseqs(format!("MMseqs2 failed: {}", stderr)));
         }
 
-        // Parse cluster output
-        self.parse_cluster_output(output)
+        Ok(output.to_path_buf())
     }
 
-    /// Parse MMseqs2 cluster output.
-    fn parse_cluster_output(&self, output_dir: &Path) -> Result<Vec<GeneCluster>> {
+    /// Parse MMseqs2 cluster output with gene sequences to set centroids.
+    fn parse_cluster_output(&self, output_dir: &Path, genes: &[Gene]) -> Result<Vec<GeneCluster>> {
         // MMseqs2 outputs a cluster file with format:
         // representative    member1
         // representative    member2
@@ -157,6 +157,12 @@ impl MMseqsRunner {
         use std::io::{BufRead, BufReader};
         use std::fs::File;
 
+        // Build gene ID to sequence mapping
+        let gene_sequences: std::collections::HashMap<String, Vec<u8>> = genes
+            .iter()
+            .map(|g| (g.id.to_string(), g.sequence.clone()))
+            .collect();
+
         let file = File::open(&cluster_file)?;
         let reader = BufReader::new(file);
 
@@ -170,14 +176,21 @@ impl MMseqsRunner {
                 let representative = parts[0];
                 let member = parts[1];
 
-                clusters
+                let cluster = clusters
                     .entry(representative.to_string())
                     .or_insert_with(|| {
                         let mut c = GeneCluster::new(representative);
                         c.support = 1;
                         c
-                    })
-                    .add_gene(crate::graph::GeneId::new(member));
+                    });
+                cluster.add_gene(crate::graph::GeneId::new(member));
+            }
+        }
+
+        // Set centroid sequences from the representative gene
+        for cluster in clusters.values_mut() {
+            if let Some(seq) = gene_sequences.get(cluster.id.as_str()) {
+                cluster.centroid = Some(seq.clone());
             }
         }
 
@@ -193,7 +206,10 @@ impl Clusterer for MMseqsRunner {
 
         // Run clustering
         let output_dir = self.tmp_dir.join("clusters");
-        self.easy_cluster(&input_file, &output_dir, identity_threshold)
+        let _clusters = self.easy_cluster(&input_file, &output_dir, identity_threshold)?;
+
+        // Parse cluster output with gene sequences to set centroids
+        self.parse_cluster_output(&output_dir, genes)
     }
 
     fn name(&self) -> &str {

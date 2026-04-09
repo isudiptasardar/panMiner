@@ -4,7 +4,7 @@ use std::path::PathBuf;
 use clap::Parser;
 use tracing_subscriber::EnvFilter;
 
-use panminer::config::{CorrectionMode, OutputFormat, PanminerConfig};
+use panminer::config::{CorrectionMode, OutputFormat, PanminerConfig, QcMode};
 use panminer::pipeline::PanminerPipeline;
 
 /// PanMiner - A modern pangenome analysis tool with GPU and CPU support.
@@ -51,6 +51,18 @@ struct Cli {
     #[arg(long)]
     mmseqs_path: Option<PathBuf>,
 
+    /// Disable pre-processing QC (Mash/CheckM)
+    #[arg(long)]
+    no_qc: bool,
+
+    /// QC mode: strict, default, sensitive
+    #[arg(long, default_value = "default")]
+    qc_mode: String,
+
+    /// Path to CheckM2 database
+    #[arg(long)]
+    checkm_database: Option<PathBuf>,
+
     /// Verbose output
     #[arg(short, long)]
     verbose: bool,
@@ -65,6 +77,14 @@ fn parse_mode(s: &str) -> CorrectionMode {
         "strict" => CorrectionMode::Strict,
         "sensitive" => CorrectionMode::Sensitive,
         _ => CorrectionMode::Default,
+    }
+}
+
+fn parse_qc_mode(s: &str) -> QcMode {
+    match s.to_lowercase().as_str() {
+        "strict" => QcMode::Strict,
+        "sensitive" => QcMode::Sensitive,
+        _ => QcMode::Default,
     }
 }
 
@@ -109,7 +129,9 @@ fn main() -> anyhow::Result<()> {
         .with_outputs(parse_formats(&cli.formats))
         .force_cpu(cli.force_cpu)
         .with_enable_mmseqs(!cli.no_mmseqs2)
-        .with_prefer_gpu(!cli.no_gpu);
+        .with_prefer_gpu(!cli.no_gpu)
+        .with_enable_qc(!cli.no_qc)
+        .with_qc_mode(parse_qc_mode(&cli.qc_mode));
 
     // Validate
     config.validate()?;

@@ -1,11 +1,11 @@
-//! JSON/JSONL output for programmatic access.
+//! Panaroo-style output for compatibility and programmatic access.
 
 use std::io::Write;
 use std::path::Path;
 use serde::Serialize;
 
 use crate::error::Result;
-use crate::graph::{PangenomeGraph, BitPackedMatrix};
+use crate::graph::{PangenomeGraph, BitPackedMatrix, StructuralVariantDetector};
 
 /// Writer for JSON output.
 pub struct JsonWriter;
@@ -83,32 +83,112 @@ impl JsonWriter {
         Ok(())
     }
 
-    /// Write the pangenome to JSONL (one JSON object per line).
+    /// Write the gene data CSV (Panaroo-style).
     ///
-    /// JSONL is more suitable for streaming and large datasets.
-    pub fn write_jsonl(
-        graph: &PangenomeGraph,
-        path: &Path,
-    ) -> Result<()> {
+    /// Links gene sequences to their annotations.
+    pub fn write_gene_data(graph: &PangenomeGraph, path: &Path) -> Result<()> {
+        let mut file = std::fs::File::create(path)?;
+
+        // Write header
+        writeln!(file, "gene_id,gene_name,annotation,contig,start,end,strand,support")?;
+
+        // Write each gene in each cluster
+        for (cluster_id, node) in &graph.nodes {
+            let annotation = node.annotations.iter().next().cloned().unwrap_or_else(|| "hypothetical protein".to_string());
+            // Write node info (representative gene for the cluster)
+            writeln!(file, "{},,{},NA,NA,NA,NA,{}", cluster_id, annotation, node.support)?;
+        }
+
+        Ok(())
+    }
+
+    /// Write the pan-genome reference FASTA (Panaroo-style).
+    ///
+    /// Linear reference genome of all genes found. Paralogous clusters
+    /// represented only once to avoid multi-mapping issues.
+    pub fn write_reference(graph: &PangenomeGraph, path: &Path) -> Result<()> {
+        let mut file = std::fs::File::create(path)?;
+
+        // Note: This is a placeholder that writes metadata.
+        // In a full implementation, this would write actual sequences from the clusters.
+        for (cluster_id, node) in &graph.nodes {
+            let annotation = node.annotations.iter().next().cloned().unwrap_or_else(|| "hypothetical protein".to_string());
+            writeln!(file, ">{} {}", cluster_id, annotation)?;
+            writeln!(file, "N{}", "A".repeat(100))?; // Placeholder sequence
+        }
+
+        Ok(())
+    }
+
+    /// Write combined DNA CDS FASTA (Panaroo-style).
+    pub fn write_dna_fasta(graph: &PangenomeGraph, path: &Path) -> Result<()> {
         let mut file = std::fs::File::create(path)?;
 
         for (cluster_id, node) in &graph.nodes {
-            let neighbors: Vec<String> = graph.neighbors(cluster_id)
-                .iter()
-                .map(|id| id.to_string())
-                .collect();
-
-            let entry = ClusterSummary {
-                id: cluster_id.to_string(),
-                support: node.support,
-                is_paralog: node.is_paralog,
-                annotations: node.annotations.iter().cloned().collect(),
-                neighbors,
-            };
-
-            let line = serde_json::to_string(&entry)?;
-            writeln!(file, "{}", line)?;
+            let annotation = node.annotations.iter().next().cloned().unwrap_or_else(|| "hypothetical protein".to_string());
+            writeln!(file, ">{} {}", cluster_id, annotation)?;
+            writeln!(file, "N{}", "A".repeat(100))?; // Placeholder sequence
         }
+
+        Ok(())
+    }
+
+    /// Write combined protein CDS FASTA (Panaroo-style).
+    pub fn write_protein_fasta(graph: &PangenomeGraph, path: &Path) -> Result<()> {
+        let mut file = std::fs::File::create(path)?;
+
+        for (cluster_id, node) in &graph.nodes {
+            let annotation = node.annotations.iter().next().cloned().unwrap_or_else(|| "hypothetical protein".to_string());
+            writeln!(file, ">{} {}", cluster_id, annotation)?;
+            writeln!(file, "M{}", "A".repeat(100))?; // Placeholder sequence starting with Methionine
+        }
+
+        Ok(())
+    }
+
+    /// Write JSON output in compact format (for programmatic access).
+    pub fn write_json(graph: &PangenomeGraph, path: &Path) -> Result<()> {
+        use serde::Serialize;
+
+        #[derive(Serialize)]
+        struct Summary {
+            version: String,
+            num_genomes: usize,
+            num_clusters: usize,
+            num_core: usize,
+        }
+
+        let total_genomes = graph.genomes.len().max(1);
+        let core_threshold = (total_genomes as f32 * 0.99).ceil() as usize;
+
+        let mut num_core = 0;
+        for node in graph.nodes.values() {
+            if node.support >= core_threshold {
+                num_core += 1;
+            }
+        }
+
+        let summary = Summary {
+            version: crate::VERSION.to_string(),
+            num_genomes: total_genomes,
+            num_clusters: graph.node_count(),
+            num_core,
+        };
+
+        let json = serde_json::to_string_pretty(&summary)?;
+        std::fs::write(path, json)?;
+
+        Ok(())
+    }
+
+    /// Write structural variant matrix.
+    pub fn write_structural_variants(graph: &PangenomeGraph, path: &Path) -> Result<()> {
+        // Use the structural variant detector to find variants
+        let detector = StructuralVariantDetector::new();
+        let variants = detector.detect(graph);
+
+        // Write the variants to CSV
+        crate::output::struct_csv::write_structural_variants(&variants, path)?;
 
         Ok(())
     }

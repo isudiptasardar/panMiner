@@ -201,6 +201,8 @@ pub struct Node {
     pub annotations: HashSet<String>,
     /// Is this a paralog cluster?
     pub is_paralog: bool,
+    /// Centroid sequence (representative)
+    pub centroid_sequence: Option<Sequence>,
 }
 
 impl Node {
@@ -212,6 +214,7 @@ impl Node {
             genomes: HashSet::new(),
             annotations: HashSet::new(),
             is_paralog: cluster.is_paralog,
+            centroid_sequence: cluster.centroid.clone(),
         }
     }
 }
@@ -376,5 +379,15 @@ mod tests {
         assert_eq!(graph.node_count(), 2);
         assert_eq!(graph.edge_count(), 1);
         assert_eq!(graph.degree(&ClusterId::new("c1")), 1);
+    }
+
+    #[test]
+    fn test_node_from_cluster_with_centroid() {
+        let mut cluster = GeneCluster::new("test_cluster");
+        cluster.centroid = Some(b"ATCGATCGATCGATCG".to_vec());
+        cluster.support = 3;
+
+        let node = Node::from_cluster(&cluster);
+        assert_eq!(node.centroid_sequence, Some(b"ATCGATCGATCGATCG".to_vec()));
     }
 }

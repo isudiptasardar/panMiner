@@ -11,9 +11,11 @@ mod types;
 mod concurrent;
 mod matrix;
 mod builder;
+mod structural_variants;
 
 pub use types::{Gene, GeneId, GenomeId, Sequence, Strand, Node, Edge, EdgeKey};
 pub use types::{GeneCluster, ClusterId, PangenomeGraph};
 pub use concurrent::ConcurrentGraph;
 pub use matrix::BitPackedMatrix;
 pub use builder::GraphBuilder;
+pub use structural_variants::{StructuralVariantDetector, StructuralVariant, VariantType};

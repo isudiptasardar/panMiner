@@ -3,6 +3,8 @@
 use std::collections::HashSet;
 use std::path::PathBuf;
 
+pub use crate::io::QcMode;
+
 /// Correction mode for error handling.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub enum CorrectionMode {
@@ -30,6 +32,8 @@ pub enum OutputFormat {
     Parquet,
     /// Interactive HTML visualization (requires --features viz)
     HtmlViz,
+    /// Structural variant matrix (CSV)
+    Struct,
 }
 
 impl std::fmt::Display for OutputFormat {
@@ -41,6 +45,7 @@ impl std::fmt::Display for OutputFormat {
             OutputFormat::Json => write!(f, "json"),
             OutputFormat::Parquet => write!(f, "parquet"),
             OutputFormat::HtmlViz => write!(f, "html"),
+            OutputFormat::Struct => write!(f, "struct"),
         }
     }
 }
@@ -112,6 +117,14 @@ pub struct PanminerConfig {
     /// Gene family collapse threshold (default: 0.70)
     pub collapse_threshold: f32,
 
+    // Pre-processing QC
+    /// Enable pre-processing QC (Mash/CheckM)
+    pub enable_qc: bool,
+    /// QC mode for filtering
+    pub qc_mode: QcMode,
+    /// Path to CheckM2 database (optional)
+    pub checkm_database_path: Option<PathBuf>,
+
     // Output
     /// Output formats to generate
     pub outputs: HashSet<OutputFormat>,
@@ -148,6 +161,9 @@ impl Default for PanminerConfig {
             mode: CorrectionMode::Default,
             contamination_threshold: 2,
             collapse_threshold: 0.70,
+            enable_qc: true,
+            qc_mode: QcMode::Default,
+            checkm_database_path: None,
             outputs: [OutputFormat::Matrix, OutputFormat::Alignment].into_iter().collect(),
             alignment_tool: AlignmentTool::default(),
             output_prefix: String::from("panminer"),
@@ -239,6 +255,24 @@ impl PanminerConfig {
     /// Force CPU processing.
     pub fn force_cpu(mut self, force: bool) -> Self {
         self.force_cpu = force;
+        self
+    }
+
+    /// Enable or disable pre-processing QC.
+    pub fn with_enable_qc(mut self, enable: bool) -> Self {
+        self.enable_qc = enable;
+        self
+    }
+
+    /// Set QC mode.
+    pub fn with_qc_mode(mut self, mode: QcMode) -> Self {
+        self.qc_mode = mode;
+        self
+    }
+
+    /// Set path to CheckM2 database.
+    pub fn with_checkm_database_path(mut self, path: PathBuf) -> Self {
+        self.checkm_database_path = Some(path);
         self
     }
 

@@ -1,0 +1,21 @@
+# Build artifacts
+target/
+
+# Local documentation (not for distribution)
+PLAN.md
+TASK.md
+TESTING.md
+CLAUDE.md
+Comparison.md
+Specs.md
+Architecture.md
+Panaroo_Comparison.md
+
+# Superpowers documentation
+docs/
+
+# ignore .gitignore, we don't want to push it
+#.gitignore
+
+# calude settings
+.claude/

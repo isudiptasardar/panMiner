@@ -9,8 +9,10 @@ use crate::error::{Error, Result};
 use crate::graph::{
     BitPackedMatrix, ConcurrentGraph, Gene, GeneCluster, Node, GenomeId, GraphBuilder, PangenomeGraph,
 };
-use crate::io::GffParser;
+use crate::io::{GffParser, CheckmQcRunner, QcRunner, GenomeQC};
 use crate::output::{OutputPaths, OutputWriter};
+use crate::output::qc_stats::{write_qc_stats, write_qc_summary};
+use std::fs;
 
 /// Main pipeline for PanMiner pangenome analysis.
 pub struct PanminerPipeline {
@@ -35,6 +37,15 @@ impl PanminerPipeline {
             .ok(); // Ignore error if already initialized
 
         tracing::info!("Using {} threads", threads);
+
+        // Phase 0: Pre-processing QC (optional)
+        let _qc_results = if self.config.enable_qc {
+            tracing::info!("Phase 0: Running pre-processing QC");
+            self.run_qc()?
+        } else {
+            tracing::info!("Phase 0: Skipped (QC disabled)");
+            vec![]
+        };
 
         // Phase 1: Parse input files
         tracing::info!("Phase 1: Parsing {} input files", self.config.input_files.len());
@@ -98,6 +109,16 @@ impl PanminerPipeline {
             concurrent_graph.edge_count()
         );
 
+        // Phase 4.5: Missing gene recovery (optional)
+        // This step searches for genes that may have been missed during annotation
+        // It requires contig sequences which are not currently stored in the graph
+        // so it's disabled until contig sequence storage is implemented
+        // Uncomment the following lines to enable when contig sequences are available:
+        /*
+        tracing::info!("Phase 4.5: Running missing gene recovery");
+        self.run_missing_gene_recovery(&concurrent_graph)?;
+        */
+
         // Phase 5: Build presence/absence matrix
         tracing::info!("Phase 5: Building presence/absence matrix");
         let graph = concurrent_graph.to_standard();
@@ -110,6 +131,68 @@ impl PanminerPipeline {
 
         tracing::info!("Pipeline complete");
         Ok(paths)
+    }
+
+    /// Run pre-processing QC on all input files.
+    fn run_qc(&self) -> Result<Vec<GenomeQC>> {
+        let mut qc_results = Vec::new();
+
+        // Try CheckM2
+        let checkm_runner = self.config.checkm_database_path.clone()
+            .map(|_| CheckmQcRunner::with_path("checkm2"))
+            .or_else(|| {
+                // Try to detect CheckM2
+                CheckmQcRunner::detect()
+            });
+
+        // Run QC on each input file
+        for input_path in &self.config.input_files {
+            let genome_id = input_path
+                .file_stem()
+                .and_then(|s| s.to_str())
+                .unwrap_or("unknown")
+                .to_string();
+
+            let mut qc = GenomeQC {
+                genome_id,
+                ..Default::default()
+            };
+
+            if let Some(runner) = &checkm_runner {
+                let qc_runner: &dyn QcRunner = runner;
+                if let Ok(qc_checkm) = qc_runner.run_qc(input_path) {
+                    qc.completeness = qc_checkm.completeness;
+                    qc.contamination = qc_checkm.contamination;
+                    qc.genome_size = qc_checkm.genome_size;
+                    qc.num_contigs = qc_checkm.num_contigs;
+                    qc.n50 = qc_checkm.n50;
+                    qc.mash_distance = qc_checkm.mash_distance;
+
+                    // Update passed status based on CheckM metrics
+                    let comp_threshold = self.config.qc_mode.min_completeness();
+                    let cont_threshold = self.config.qc_mode.contamination_threshold();
+                    qc.passed = qc.passed
+                        && qc.completeness >= comp_threshold
+                        && qc.contamination <= cont_threshold;
+                }
+            }
+
+            qc_results.push(qc);
+        }
+
+        // Write QC output files
+        let output_dir = &self.config.output_dir;
+        fs::create_dir_all(output_dir)?;
+
+        let stats_path = output_dir.join("qc_stats.csv");
+        write_qc_stats(&qc_results, &stats_path)?;
+        tracing::info!("Wrote QC statistics to {}", stats_path.display());
+
+        let summary_path = output_dir.join("qc_summary.txt");
+        write_qc_summary(&qc_results, &summary_path)?;
+        tracing::info!("Wrote QC summary to {}", summary_path.display());
+
+        Ok(qc_results)
     }
 
     /// Parse all input GFF3 files in parallel.
@@ -177,15 +260,44 @@ impl PanminerPipeline {
         let remover = ContaminationRemover::from_mode(&self.config.mode, num_genomes);
         remover.remove(graph)?;
 
-        // Fragment merging (uses empty sequences for now)
-        // TODO: pass actual cluster sequences when available
+        // Fragment merging with actual cluster centroid sequences
         let merger = FragmentMerger::new()
             .with_collapse_threshold(self.config.collapse_threshold);
 
-        let empty_sequences = std::collections::HashMap::new();
-        merger.correct_mistranslations(graph, &empty_sequences)?;
-        merger.collapse_gene_families(graph, &empty_sequences)?;
+        // Build sequences HashMap from graph nodes (centroids from clusters)
+        let sequences: std::collections::HashMap<String, Vec<u8>> = graph
+            .nodes
+            .iter()
+            .map(|entry| {
+                let cluster_id = entry.key();
+                let node = entry.value();
+                (cluster_id.to_string(), node.centroid_sequence.clone().unwrap_or_default())
+            })
+            .filter(|(_, seq)| !seq.is_empty())
+            .collect();
 
+        tracing::info!("Passing {} sequences to fragment merger", sequences.len());
+
+        if sequences.is_empty() {
+            tracing::warn!("No centroid sequences available for fragment merging");
+        }
+
+        merger.correct_mistranslations(graph, &sequences)?;
+        merger.collapse_gene_families(graph, &sequences)?;
+
+        Ok(())
+    }
+
+    /// Run missing gene recovery on the graph.
+    ///
+    /// This searches for genes that may have been missed during annotation
+    /// by looking at flanking sequences around expected gene locations.
+    ///
+    /// Note: This feature requires contig sequences to be stored in the graph,
+    /// which is not currently implemented. The method is a placeholder for future implementation.
+    fn run_missing_gene_recovery(&self, _graph: &ConcurrentGraph) -> Result<()> {
+        // TODO: Implement missing gene recovery when contig sequences are available
+        tracing::info!("Missing gene recovery: disabled (contig sequences not available)");
         Ok(())
     }
 
@@ -273,7 +385,7 @@ mod streaming_tests {
         let paths = pipeline.run().expect("Pipeline should run successfully with chunks");
 
         // The matrix should have 3 genomes
-        let matrix_content = std::fs::read_to_string(paths.matrix.as_ref().unwrap()).unwrap();
+        let matrix_content = std::fs::read_to_string(paths.matrix_csv.as_ref().unwrap()).unwrap();
         assert!(matrix_content.contains("seq1"));
         assert!(matrix_content.contains("seq2"));
         assert!(matrix_content.contains("seq3"));

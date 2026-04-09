@@ -8,9 +8,11 @@ mod gff;
 mod fasta;
 mod compress;
 mod streaming;
+mod qc_traits;
 
 pub use mmap::MmapFile;
 pub use gff::GffParser;
 pub use fasta::FastaParser;
 pub use compress::{CompressedWriter, CompressedReader};
 pub use streaming::{StreamingPipeline, PartialGraph};
+pub use qc_traits::{GenomeQC, QcMode, QcRunner, CheckmQcRunner};

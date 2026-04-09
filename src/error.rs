@@ -75,6 +75,9 @@ pub enum Error {
 
     #[error("Alignment error: {0}")]
     Alignment(String),
+
+    #[error("External tool error: {0}")]
+    ExternalTool(String),
 }
 
 /// Result type alias for PanMiner operations.

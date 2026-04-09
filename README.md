@@ -1,6 +1,6 @@
 # PanMiner
 
-A modern pangenome analysis tool written in Rust. PanMiner processes GFF3-annotated genome assemblies to build pangenome graphs, with support for GPU-accelerated clustering via MMseqs2 and CPU fallback.
+A modern pangenome analysis tool written in Rust. PanMiner processes GFF3-annotated genome assemblies to build pangenome graphs, with support for GPU-accelerated clustering via MMseqs2, pre-processing QC via CheckM2, and CPU fallback.
 
 [![crates.io](https://img.shields.io/crates/v/panminer)](https://crates.io/crates/panminer)
 [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
@@ -8,6 +8,7 @@ A modern pangenome analysis tool written in Rust. PanMiner processes GFF3-annota
 
 ## Features
 
+- **Pre-processing QC** - CheckM2 integration for completeness/contamination scoring
 - **Memory-mapped I/O** - Zero-copy file access for large datasets
 - **Parallel processing** - Rayon-based work-stealing parallelism
 - **GPU-accelerated clustering** - MMseqs2 with CUDA support
@@ -80,8 +81,15 @@ The installation script will:
 
 ### External Tool Installation (Optional)
 
-**MMseqs2** (for GPU-accelerated clustering):
+### CheckM2 (Pre-processing QC)
+```bash
+# Via conda
+conda install -c bioconda checkm2
 
+# Or download from https://github.com/chklovski/CheckM2
+```
+
+### MMseqs2 (GPU-accelerated clustering)
 ```bash
 # Via conda
 conda install -c bioconda mmseqs2
@@ -89,7 +97,7 @@ conda install -c bioconda mmseqs2
 # Or download from https://github.com/soedinglab/MMseqs2
 ```
 
-**Note**: PanMiner automatically detects MMseqs2 and NVIDIA GPUs. If MMseqs2 is not installed, it falls back to CPU-based greedy clustering. Use `--no-gpu` or `--no-mmseqs2` to disable GPU/MMseqs2 features.
+**Note**: PanMiner automatically detects CheckM2 and MMseqs2. If CheckM2 is not installed, QC is skipped. If MMseqs2 is not installed, it falls back to CPU-based greedy clustering. Use `--no-qc`, `--no-gpu`, or `--no-mmseqs2` to disable specific features.
 
 ## Quick Start
 
@@ -117,6 +125,9 @@ panminer *.gff -o output --force-cpu
 | `--force-cpu` | Disable GPU/MMseqs2 | `false` |
 | `--no-mmseqs2` | Disable MMseqs2 clustering | `false` |
 | `--no-gpu` | Disable GPU detection and acceleration | `false` |
+| `--no-qc` | Disable pre-processing QC | `false` |
+| `--qc-mode` | QC mode: strict, default, sensitive | `default` |
+| `--checkm-database` | Path to CheckM2 database | Auto-detect |
 | `--mmseqs-path` | Path to MMseqs2 binary | Auto-detect |
 | `-v, --verbose` | Enable debug logging | `false` |
 | `--formats` | Output formats (comma-separated) | `matrix,alignment,graph` |
@@ -131,13 +142,45 @@ panminer *.gff -o output --force-cpu
 
 ## Output Files
 
+PanMiner follows **Panaroo/Roary output naming conventions** for compatibility. The following files are generated:
+
+| File | Description | Roary Compatible |
+|------|-------------|------------------|
+| `gene_presence_absence.csv` | Gene presence/absence matrix | ✅ Yes |
+| `gene_presence_absence.Rtab` | Binary tab-separated presence/absence | ✅ Yes |
+| `final_graph.gml` | Pan-genome graph (Cytoscape-compatible) | ❌ No |
+| `struct_presence_absence.csv` | Genomic rearrangement events | ❌ No |
+| `pan_genome_reference.fa` | Reference genome of all genes | ✅ Yes (similar) |
+| `gene_data.csv` | Links gene sequences to annotations | ❌ No |
+| `combined_DNA_CDS.fasta` | All nucleotide sequences | ❌ No |
+| `combined_protein_CDS.fasta` | All protein sequences | ❌ No |
+| `core_gene_alignment.aln` | Core gene alignment | ❌ No (uses .aln) |
+
+### QC Output Files (when enabled)
+
 | File | Description |
 |------|-------------|
-| `_gene_presence_absence.csv` | Gene presence/absence matrix (Roary-compatible) |
-| `_core_alignment.fasta` | Core genome alignment |
-| `_pangenome_graph.gml` | Cytoscape-compatible graph |
-| `_pangenome.json` | Full pangenome summary |
+| `qc_stats.csv` | Per-genome QC metrics (completeness, contamination, etc.) |
+| `qc_summary.txt` | Human-readable QC summary with pass/fail status |
+
+### Additional PanMiner-Specific Files
+
+| File | Description |
+|------|-------------|
+| `_pangenome.json` | Full pangenome summary (JSON) |
 | `_pangenome.jsonl` | Streaming JSON output |
+| `_pangenome.parquet` | Parquet format (if `--features parquet`) |
+| `_pangenome.html` | Interactive HTML visualization (if `--features viz`) |
+
+---
+
+## Panaroo/Roary Compatibility
+
+PanMiner uses the same output file naming convention as **Panaroo** and **Roary**:
+- `gene_presence_absence.csv` - Same name as Roary (drop-in replacement)
+- `gene_presence_absence.Rtab` - Roary-compatible binary format
+- `final_graph.gml` - Cytoscape-compatible graph format
+- `core_gene_alignment.aln` - Alignment file (uses `.aln` extension like Panaroo)
 
 ## Usage Examples
 
@@ -274,7 +317,7 @@ See [Comparison.md](Comparison.md) for detailed comparison with Panaroo and the 
 ## Known Gaps
 
 See [Comparison.md](Comparison.md#priority-roadmap) for current limitations:
-- Pre-processing QC (Mash, CheckM wrappers)
+- Pre-processing QC with Mash (CheckM2 is complete)
 - Real multiple sequence alignment output
 - Downstream analysis (GWAS, evolutionary models)
 - Complete integration tests

@@ -10,5 +10,5 @@ mod fragment;
 mod missing;
 
 pub use contamination::ContaminationRemover;
-pub use fragment::FragmentMerger;
-pub use missing::MissingGeneRecoverer;
+pub use fragment::{FragmentMerger, MergeStats};
+pub use missing::{MissingGeneRecoverer, RecoveryStats};
