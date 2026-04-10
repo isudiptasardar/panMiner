@@ -142,13 +142,13 @@ fn parse_fasta(fasta: &str) -> (Vec<(String, Vec<u8>)>, usize) {
 
     for line in fasta.lines() {
         if line.starts_with('>') {
+            // Push current sequence if we have one
             if !current_name.is_empty() {
                 sequences.push((current_name, current_seq));
-                current_name = String::new();
-                current_seq = Vec::new();
             }
-            // Extract name from header (everything after '>')
+            // Start new sequence
             current_name = line[1..].to_string();
+            current_seq = Vec::new();
         } else {
             let trimmed = line.trim();
             if !trimmed.is_empty() {

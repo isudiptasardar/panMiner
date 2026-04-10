@@ -1,6 +1,6 @@
 //! Core data types for the pangenome graph.
 
-use std::collections::HashSet;
+use std::collections::{HashSet, HashMap};
 use std::hash::Hash;
 use serde::{Serialize, Deserialize};
 
@@ -203,6 +203,10 @@ pub struct Node {
     pub is_paralog: bool,
     /// Centroid sequence (representative)
     pub centroid_sequence: Option<Sequence>,
+    /// Whether this node represents a contig end
+    pub is_contig_end: bool,
+    /// Contig sequences where this gene appears (for missing gene recovery)
+    pub contig_sequences: HashMap<String, Sequence>,
 }
 
 impl Node {
@@ -215,7 +219,14 @@ impl Node {
             annotations: HashSet::new(),
             is_paralog: cluster.is_paralog,
             centroid_sequence: cluster.centroid.clone(),
+            is_contig_end: false,
+            contig_sequences: HashMap::new(),
         }
+    }
+
+    /// Add a contig sequence to this node.
+    pub fn add_contig_sequence(&mut self, contig_name: impl Into<String>, sequence: Sequence) {
+        self.contig_sequences.insert(contig_name.into(), sequence);
     }
 }
 

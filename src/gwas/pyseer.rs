@@ -18,7 +18,8 @@ use crate::gwas::traits::{GWASRunner, GWASOutput, GWASResult};
 ///
 /// ```no_run
 /// use std::path::PathBuf;
-/// use panminer::{PangenomeGraph, BitPackedMatrix, PyseerRunner};
+/// use panminer::graph::{PangenomeGraph, BitPackedMatrix};
+/// use panminer::gwas::PyseerRunner;
 ///
 /// let mut runner = PyseerRunner::new();
 /// runner.with_distances(PathBuf::from("distances.txt"));

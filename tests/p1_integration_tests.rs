@@ -6,8 +6,6 @@
 //! - Paralog handling
 //! - Large dataset support
 
-use std::fs::File;
-use std::io::Write;
 use tempfile::TempDir;
 
 use panminer::config::{PanminerConfig, CorrectionMode, OutputFormat};
@@ -141,7 +139,6 @@ mod test_helpers {
 
 #[test]
 fn test_pipeline_contig_end_pruning() {
-    use std::fs::read_to_string;
 
     let temp_dir = TempDir::new().unwrap();
     let output_dir = temp_dir.path().join("output");
@@ -216,7 +213,6 @@ fn test_pipeline_sv_matrix_output() {
 
 #[test]
 fn test_pipeline_with_paralogs() {
-    use std::fs::read_to_string;
 
     let temp_dir = TempDir::new().unwrap();
     let output_dir = temp_dir.path().join("output");
