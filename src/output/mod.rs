@@ -18,6 +18,7 @@ mod json;
 mod struct_csv;
 mod sv_matrix;
 mod parquet;
+mod html_viz;
 pub mod qc_stats;
 
 pub use matrix::MatrixWriter;
@@ -30,6 +31,9 @@ pub use qc_stats::{write_qc_stats, write_qc_summary};
 
 #[cfg(feature = "parquet")]
 pub use parquet::ParquetWriter;
+
+#[cfg(feature = "viz")]
+pub use html_viz::HtmlVizWriter;
 
 use std::path::PathBuf;
 
@@ -83,6 +87,8 @@ impl OutputWriter {
             sv_matrix: None,
             #[cfg(feature = "parquet")]
             parquet: None,
+            #[cfg(feature = "viz")]
+            html_viz: None,
         };
 
         // Write formats (sequential for now to collect paths)
@@ -162,7 +168,11 @@ impl OutputWriter {
                 OutputFormat::HtmlViz => {
                     #[cfg(feature = "viz")]
                     {
-                        tracing::info!("HTML visualization: not yet implemented");
+                        let path = self.output_dir.join("pangenome_viz.html");
+                        let writer = HtmlVizWriter::new();
+                        writer.write(graph, matrix, &path)?;
+                        paths.html_viz = Some(path);
+                        tracing::info!("Wrote HTML visualization");
                     }
                     #[cfg(not(feature = "viz"))]
                     {
@@ -230,4 +240,7 @@ pub struct OutputPaths {
     /// Parquet output files
     #[cfg(feature = "parquet")]
     pub parquet: Option<PathBuf>,
+    /// HTML visualization output
+    #[cfg(feature = "viz")]
+    pub html_viz: Option<PathBuf>,
 }

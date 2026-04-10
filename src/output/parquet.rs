@@ -3,6 +3,8 @@
 //! This module provides Parquet file output for the pangenome graph and matrix,
 //! enabling efficient columnar storage and integration with data analytics tools.
 
+#![cfg(feature = "parquet")]
+
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
