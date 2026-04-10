@@ -26,9 +26,9 @@ pub struct BitPackedMatrix {
     /// Bytes per row (num_genomes rounded up to nearest 8)
     bytes_per_row: usize,
     /// Genome names (column headers)
-    genome_names: Vec<String>,
+    pub genome_names: Vec<String>,
     /// Cluster IDs (row identifiers)
-    cluster_ids: Vec<String>,
+    pub cluster_ids: Vec<String>,
 }
 
 impl BitPackedMatrix {

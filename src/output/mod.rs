@@ -17,6 +17,7 @@ mod graph;
 mod json;
 mod struct_csv;
 mod sv_matrix;
+mod parquet;
 pub mod qc_stats;
 
 pub use matrix::MatrixWriter;
@@ -26,6 +27,9 @@ pub use json::JsonWriter;
 pub use struct_csv::write_structural_variants;
 pub use sv_matrix::SVMatrixWriter;
 pub use qc_stats::{write_qc_stats, write_qc_summary};
+
+#[cfg(feature = "parquet")]
+pub use parquet::ParquetWriter;
 
 use std::path::PathBuf;
 
@@ -77,6 +81,8 @@ impl OutputWriter {
             jsonl: None,
             struct_csv: None,
             sv_matrix: None,
+            #[cfg(feature = "parquet")]
+            parquet: None,
         };
 
         // Write formats (sequential for now to collect paths)
@@ -142,7 +148,11 @@ impl OutputWriter {
                 OutputFormat::Parquet => {
                     #[cfg(feature = "parquet")]
                     {
-                        tracing::info!("Parquet output: not yet implemented");
+                        let path = self.output_dir.join("matrix.parquet");
+                        let writer = ParquetWriter::new();
+                        writer.write_matrix(matrix, &path)?;
+                        paths.parquet = Some(path);
+                        tracing::info!("Wrote Parquet presence/absence matrix");
                     }
                     #[cfg(not(feature = "parquet"))]
                     {
@@ -217,4 +227,7 @@ pub struct OutputPaths {
     pub struct_csv: Option<PathBuf>,
     /// Structural variant matrix (TSV)
     pub sv_matrix: Option<PathBuf>,
+    /// Parquet output files
+    #[cfg(feature = "parquet")]
+    pub parquet: Option<PathBuf>,
 }

@@ -78,6 +78,12 @@ pub enum Error {
 
     #[error("External tool error: {0}")]
     ExternalTool(String),
+
+    #[error("Arrow error: {0}")]
+    Arrow(String),
+
+    #[error("Parquet error: {0}")]
+    Parquet(String),
 }
 
 /// Result type alias for PanMiner operations.
