@@ -19,3 +19,5 @@ docs/
 
 # calude settings
 .claude/
+PANAROO_ALGORITHM.md
+memory/

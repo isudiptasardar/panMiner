@@ -33,6 +33,7 @@ pub mod clustering;
 pub mod graph;
 pub mod correction;
 pub mod output;
+pub mod gwas;
 pub mod pipeline;
 
 // Re-exports for convenience
