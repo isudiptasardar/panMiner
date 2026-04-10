@@ -14,6 +14,9 @@ A modern pangenome analysis tool written in Rust. PanMiner processes GFF3-annota
 - **GPU-accelerated clustering** - MMseqs2 with CUDA support
 - **Concurrent graph** - Lock-free DashMap-based graph construction
 - **Multiple output formats** - CSV, FASTA, GML, JSON, JSONL, Parquet, HTML
+- **Contig-end pruning** - Recursive degree-1 node removal at contig ends
+- **Structural variant matrix** - Gene triplet presence/absence output
+- **Expanded integration tests** - End-to-end pipeline testing with real data scenarios
 
 ## Installation
 

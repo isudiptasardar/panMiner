@@ -899,15 +899,15 @@ git commit -m "fix: resolve compilation errors from P1 features"
 
 ### Task 9: Documentation and cleanup
 
-- [ ] **Step 1: Update README**
+- [x] **Step 1: Update README**
 
 Add new features to feature list in `README.md`.
 
-- [ ] **Step 2: Update Comparison.md**
+- [x] **Step 2: Update Comparison.md**
 
 Update P1 feature status in `Comparison.md`.
 
-- [ ] **Step 3: Final verification**
+- [x] **Step 3: Final verification**
 
 ```bash
 cargo test --all
@@ -920,15 +920,15 @@ cargo check --all-features
 
 | Task | Status |
 |------|--------|
-| Task 1: Add `is_contig_end` to Node | |
-| Task 2: Mark contig ends during graph building | |
-| Task 3: Create ContigEndPruner module | |
-| Task 4: Wire into pipeline | |
-| Task 5: Create SV matrix output | |
-| Task 6: Integrate into OutputWriter | |
-| Task 7: Create integration tests | |
-| Task 8: Fix issues and verify | |
-| Task 9: Documentation | |
+| Task 1: Add `is_contig_end` to Node | ✅ Complete |
+| Task 2: Mark contig ends during graph building | ✅ Complete |
+| Task 3: Create ContigEndPruner module | ✅ Complete |
+| Task 4: Wire into pipeline | ✅ Complete |
+| Task 5: Create SV matrix output | ✅ Complete |
+| Task 6: Integrate into OutputWriter | ✅ Complete |
+| Task 7: Create integration tests | ✅ Complete |
+| Task 8: Fix issues and verify | ✅ Complete |
+| Task 9: Documentation | ✅ Complete |
 
 ---
 
