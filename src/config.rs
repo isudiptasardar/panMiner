@@ -34,6 +34,8 @@ pub enum OutputFormat {
     HtmlViz,
     /// Structural variant matrix (CSV)
     Struct,
+    /// Structural variant matrix (TSV)
+    SVMatrix,
 }
 
 impl std::fmt::Display for OutputFormat {
@@ -46,6 +48,7 @@ impl std::fmt::Display for OutputFormat {
             OutputFormat::Parquet => write!(f, "parquet"),
             OutputFormat::HtmlViz => write!(f, "html"),
             OutputFormat::Struct => write!(f, "struct"),
+            OutputFormat::SVMatrix => write!(f, "svmatrix"),
         }
     }
 }

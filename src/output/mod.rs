@@ -16,6 +16,7 @@ mod alignment;
 mod graph;
 mod json;
 mod struct_csv;
+mod sv_matrix;
 pub mod qc_stats;
 
 pub use matrix::MatrixWriter;
@@ -23,6 +24,7 @@ pub use alignment::AlignmentWriter;
 pub use graph::GmlWriter;
 pub use json::JsonWriter;
 pub use struct_csv::write_structural_variants;
+pub use sv_matrix::SVMatrixWriter;
 pub use qc_stats::{write_qc_stats, write_qc_summary};
 
 use std::path::PathBuf;
@@ -74,6 +76,7 @@ impl OutputWriter {
             json: None,
             jsonl: None,
             struct_csv: None,
+            sv_matrix: None,
         };
 
         // Write formats (sequential for now to collect paths)
@@ -157,11 +160,26 @@ impl OutputWriter {
                     }
                 }
                 OutputFormat::Struct => {
-                    // Structural variant matrix
+                    // Structural variant matrix (CSV)
                     let path = self.output_dir.join("struct_presence_absence.csv");
                     JsonWriter::write_structural_variants(graph, &path)?;
                     paths.struct_csv = Some(path);
-                    tracing::info!("Wrote structural variant matrix");
+                    tracing::info!("Wrote structural variant matrix (CSV)");
+                }
+                OutputFormat::SVMatrix => {
+                    // Structural variant matrix (TSV)
+                    let path = self.output_dir.join("struct_presence_absence.tsv");
+                    let genome_names: Vec<String> = graph
+                        .genomes
+                        .keys()
+                        .map(|g| g.as_str().to_string())
+                        .collect();
+                    let triplets = SVMatrixWriter::extract_triplets(graph);
+                    SVMatrixWriter::new()
+                        .with_genomes(genome_names)
+                        .write_tsv(&triplets, &path)?;
+                    paths.sv_matrix = Some(path);
+                    tracing::info!("Wrote structural variant matrix (TSV)");
                 }
             }
         }
@@ -197,4 +215,6 @@ pub struct OutputPaths {
     pub jsonl: Option<PathBuf>,
     /// Structural variant matrix (CSV)
     pub struct_csv: Option<PathBuf>,
+    /// Structural variant matrix (TSV)
+    pub sv_matrix: Option<PathBuf>,
 }

@@ -97,6 +97,8 @@ fn parse_formats(s: &str) -> std::collections::HashSet<OutputFormat> {
             "json" => Some(OutputFormat::Json),
             "parquet" => Some(OutputFormat::Parquet),
             "html" => Some(OutputFormat::HtmlViz),
+            "struct" => Some(OutputFormat::Struct),
+            "svmatrix" => Some(OutputFormat::SVMatrix),
             _ => None,
         })
         .collect()
