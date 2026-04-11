@@ -11,5 +11,13 @@ dependencies:
   # Optional: GPU-accelerated clustering (falls back to built-in CPU if absent)
   - mmseqs2
 
-  # Development dependencies
-  - pytest    # for future Python bindings testing
+  # Optional: Genome re-annotation
+  - bakta
+
+  # Optional: Pre-processing QC
+  - checkm2
+
+  # Optional: Multiple sequence alignment
+  - mafft        # default alignment tool
+  - clustalo     # Clustal Omega
+  - prank        # PRANK alignment

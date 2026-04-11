@@ -119,6 +119,79 @@ install_mmseqs2() {
     info "MMseqs2 not installed. Built-in CPU clustering will be used."
 }
 
+# ── Bakta Detection ──────────────────────────────────────────────────
+
+check_bakta() {
+    if command -v bakta &>/dev/null; then
+        local version=$(bakta --version 2>/dev/null | head -1 || echo "unknown")
+        info "Found Bakta ($version)"
+        return 0
+    fi
+    return 1
+}
+
+install_bakta() {
+    if check_bakta; then return 0; fi
+
+    if [[ "${PANMINER_NO_BAKTA:-}" == "1" ]]; then
+        info "Bakta skipped (PANMINER_NO_BAKTA=1). Raw assemblies will not be re-annotated."
+        return 0
+    fi
+
+    if command -v conda &>/dev/null; then
+        read -p "Install Bakta via conda? (needed for re-annotating raw assemblies) [y/N] " -n 1 -r
+        echo
+        if [[ $REPLY =~ ^[Yy]$ ]]; then
+            conda install -y -c conda-forge -c bioconda bakta
+            info "Bakta installed."
+            # Offer to download the database
+            if command -v bakta_db &>/dev/null; then
+                read -p "Download Bakta full database (~6GB)? [y/N] " -n 1 -r
+                echo
+                if [[ $REPLY =~ ^[Yy]$ ]]; then
+                    bakta_db download --output ~/.bakta --type full
+                    info "Bakta database downloaded."
+                fi
+            fi
+            return 0
+        fi
+    fi
+
+    info "Bakta not installed. GFF3 files will be used directly. Use -r/--reannotate to enable re-annotation."
+}
+
+# ── CheckM2 Detection ──────────────────────────────────────────────────
+
+check_checkm2() {
+    if command -v checkm2 &>/dev/null; then
+        local version=$(checkm2 --version 2>/dev/null | head -1 || echo "unknown")
+        info "Found CheckM2 ($version)"
+        return 0
+    fi
+    return 1
+}
+
+install_checkm2() {
+    if check_checkm2; then return 0; fi
+
+    if [[ "${PANMINER_NO_CHECKM2:-}" == "1" ]]; then
+        info "CheckM2 skipped (PANMINER_NO_CHECKM2=1). QC will be disabled."
+        return 0
+    fi
+
+    if command -v conda &>/dev/null; then
+        read -p "Install CheckM2 via conda? (needed for pre-processing QC) [y/N] " -n 1 -r
+        echo
+        if [[ $REPLY =~ ^[Yy]$ ]]; then
+            conda install -y -c bioconda checkm2
+            info "CheckM2 installed."
+            return 0
+        fi
+    fi
+
+    info "CheckM2 not installed. Pre-processing QC will be disabled (use --no-qc to suppress warnings)."
+}
+
 # ── Build ───────────────────────────────────────────────────────────
 
 build_release() {
@@ -182,6 +255,8 @@ main() {
     # Parse arguments for flags first
     local no_gpu=false
     local no_mmseqs2=false
+    local no_bakta=false
+    local no_checkm2=false
     local mode="install"
 
     for arg in "$@"; do
@@ -191,6 +266,12 @@ main() {
                 ;;
             --no-mmseqs2)
                 no_mmseqs2=true
+                ;;
+            --no-bakta)
+                no_bakta=true
+                ;;
+            --no-checkm2)
+                no_checkm2=true
                 ;;
             --dev)
                 mode="dev"
@@ -211,11 +292,19 @@ main() {
     if [[ "$no_mmseqs2" == "true" ]]; then
         export PANMINER_NO_MMSEQS2=1
     fi
+    if [[ "$no_bakta" == "true" ]]; then
+        export PANMINER_NO_BAKTA=1
+    fi
+    if [[ "$no_checkm2" == "true" ]]; then
+        export PANMINER_NO_CHECKM2=1
+    fi
 
     case "$mode" in
         --dev)
             install_rust
             install_mmseqs2
+            install_bakta
+            install_checkm2
             build_dev
             install_binary --dev
             ;;
@@ -231,11 +320,15 @@ main() {
             echo "  --uninstall     Remove PanMiner"
             echo "  --no-gpu        Skip GPU detection and MMseqs2 GPU installation"
             echo "  --no-mmseqs2    Skip MMseqs2 installation entirely"
+            echo "  --no-bakta      Skip Bakta installation"
+            echo "  --no-checkm2    Skip CheckM2 installation"
             echo "  --help          Show this help"
             ;;
         install|"")
             install_rust
             install_mmseqs2
+            install_bakta
+            install_checkm2
             build_release
             install_binary
             ;;
