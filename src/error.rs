@@ -106,6 +106,32 @@ impl Error {
             Error::NoGenes(_) | Error::InvalidSequenceId(_)
         )
     }
+
+    /// Create an error for when Bakta is not installed.
+    pub fn bakta_not_found() -> Self {
+        Self::ExternalTool("Bakta not found: please install with `conda install -c conda-forge -c bioconda bakta` or `pip install bakta`".to_string())
+    }
+
+    /// Create an error for when the Bakta database is not found.
+    pub fn bakta_db_not_found(path: &std::path::Path) -> Self {
+        Self::ExternalTool(format!(
+            "Bakta database not found at {:?}. Run `bakta_db download --output ~/.bakta --type full` or specify path with --bakta-db",
+            path
+        ))
+    }
+
+    /// Create an error for when Bakta annotation fails.
+    pub fn bakta_annotation_failed(genome: &str, stderr: &str) -> Self {
+        Self::ExternalTool(format!("Bakta annotation failed for {}: {}", genome, stderr.trim()))
+    }
+
+    /// Create an error for when GenBank input requires Bakta but it's not available.
+    pub fn genbank_requires_bakta(path: &std::path::Path) -> Self {
+        Self::ExternalTool(format!(
+            "GenBank input requires Bakta for conversion: {:?}. Install Bakta or provide pre-annotated GFF3 files.",
+            path
+        ))
+    }
 }
 
 #[cfg(test)]
@@ -125,5 +151,20 @@ mod tests {
 
         let err = Error::Io(std::io::Error::new(std::io::ErrorKind::NotFound, "file not found"));
         assert!(!err.is_recoverable());
+    }
+
+    #[test]
+    fn test_bakta_error_constructors() {
+        let err = Error::bakta_not_found();
+        assert!(err.to_string().contains("Bakta not found"));
+
+        let err = Error::bakta_db_not_found(std::path::Path::new("/tmp/bakta_db"));
+        assert!(err.to_string().contains("Bakta database not found"));
+
+        let err = Error::bakta_annotation_failed("genome1", "some error output");
+        assert!(err.to_string().contains("Bakta annotation failed for genome1"));
+
+        let err = Error::genbank_requires_bakta(std::path::Path::new("test.gb"));
+        assert!(err.to_string().contains("GenBank input requires Bakta"));
     }
 }
