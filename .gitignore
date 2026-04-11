@@ -1,23 +1,18 @@
 # Build artifacts
 target/
 
-# Local documentation (not for distribution)
-PLAN.md
-TASK.md
-TESTING.md
+# Documentation and reference (local only, not for distribution)
 CLAUDE.md
 Comparison.md
 Specs.md
 Architecture.md
-Panaroo_Comparison.md
-
-# Superpowers documentation
-docs/
-
-# ignore .gitignore, we don't want to push it
-#.gitignore
-
-# calude settings
-.claude/
 PANAROO_ALGORITHM.md
+
+# Claude Code session data
+.claude/
+
+# Memory database
 memory/
+
+# Superpower documentations
+docs/

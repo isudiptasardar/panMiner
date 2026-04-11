@@ -2,22 +2,27 @@
 //!
 //! Searches for genes that may have been missed by the annotation tool
 //! by looking at flanking sequences around expected gene locations.
+//! Uses semi-global Levenshtein alignment (HW mode) matching Panaroo's
+//! edlib-based approach.
 
 use std::collections::HashMap;
-use rayon::prelude::*;
 
 use crate::error::Result;
 use crate::graph::ConcurrentGraph;
+use crate::correction::simd::align_semiglobal;
 
 /// Recovers genes missed by the initial annotation.
 ///
 /// For each node pair where one genome lacks a neighboring gene,
-/// searches the surrounding contig sequence for the missing gene.
+/// searches the surrounding contig sequence for the missing gene
+/// using semi-global alignment (HW mode) matching Panaroo's find_missing.
 pub struct MissingGeneRecoverer {
     /// Minimum alignment identity to consider a hit (default: 0.70)
     min_identity: f32,
     /// Search window size in base pairs (default: 5000)
     search_window: usize,
+    /// Minimum fraction of query that must align (default: 0.20)
+    prop_match: f32,
 }
 
 impl MissingGeneRecoverer {
@@ -26,6 +31,7 @@ impl MissingGeneRecoverer {
         Self {
             min_identity: 0.70,
             search_window: 5000,
+            prop_match: 0.20,
         }
     }
 
@@ -41,17 +47,17 @@ impl MissingGeneRecoverer {
         self
     }
 
+    /// Set the minimum proportion of query that must align.
+    pub fn with_prop_match(mut self, prop: f32) -> Self {
+        self.prop_match = prop;
+        self
+    }
+
     /// Recover missing genes from the graph.
     ///
     /// For each edge in the graph, checks if any genome is missing
     /// one of the connected genes. If so, searches the flanking
-    /// sequence for a match.
-    ///
-    /// # Arguments
-    ///
-    /// * `graph` - The pangenome graph
-    /// * `contig_sequences` - Map of contig name -> sequence
-    /// * `cluster_sequences` - Map of cluster ID -> representative sequence
+    /// contig sequence for a match using semi-global alignment.
     pub fn recover(
         &self,
         graph: &ConcurrentGraph,
@@ -83,14 +89,12 @@ impl MissingGeneRecoverer {
             };
 
             // Search in contig sequences for each genome missing this gene
-            // (simplified - in practice, need genome-specific contig mapping)
             if query_seq.len() < 10 {
                 continue;
             }
 
-            // Simple k-mer search as approximation
-            let found = self.simd_search_sequence(query_seq, contig_sequences);
-            if found {
+            // Search using semi-global alignment (HW mode)
+            if self.search_in_contigs(query_seq, contig_sequences) {
                 recovered += 1;
             }
         }
@@ -102,36 +106,58 @@ impl MissingGeneRecoverer {
         })
     }
 
-    /// Search for a query sequence in contig sequences.
+    /// Search for a query sequence in contig sequences using semi-global alignment.
     ///
-    /// Uses a simple k-mer based search for initial screening.
-    /// SIMD-optimized search sequence using chunked parallel iteration
-    pub fn simd_search_sequence(
+    /// Uses sliding-window semi-global alignment (HW mode) to find the query
+    /// embedded within longer contig sequences. This matches Panaroo's edlib-based
+    /// approach where the query is aligned within the target.
+    fn search_in_contigs(
         &self,
         query: &[u8],
         contigs: &HashMap<String, Vec<u8>>,
     ) -> bool {
-        if query.len() < 11 {
+        if query.is_empty() {
             return false;
         }
 
-        let kmer_len = 11;
-        let query_kmers: std::collections::HashSet<&[u8]> = query
-            .windows(kmer_len)
-            .collect();
+        let min_align_len = (query.len() as f32 * self.prop_match) as usize;
+        let min_align_len = min_align_len.max(1);
 
-        let threshold = (query_kmers.len() as f32 * self.min_identity) as usize;
+        for seq in contigs.values() {
+            if seq.len() < query.len() {
+                // Contig is shorter than query — just do direct alignment
+                let (identity, _dist, align_len) = align_semiglobal(query, seq);
+                if align_len >= min_align_len && identity >= self.min_identity as f64 {
+                    return true;
+                }
+                continue;
+            }
 
-        // Use rayon for parallel searching across contigs
-        contigs.par_iter().any(|(_name, seq)| {
-            let matches: usize = seq
-                .windows(kmer_len)
-                .map(|kmer| if query_kmers.contains(kmer) { 1 } else { 0 })
-                .sum();
-            matches >= threshold
-        })
+            // Slide a window across the contig and align the query within each window
+            let window_size = query.len() + self.search_window;
+            let step = (query.len() / 2).max(100);
+
+            let mut pos = 0;
+            while pos < seq.len() {
+                let end = (pos + window_size).min(seq.len());
+                let window = &seq[pos..end];
+
+                let (identity, _dist, align_len) = align_semiglobal(query, window);
+
+                if align_len >= min_align_len && identity >= self.min_identity as f64 {
+                    return true;
+                }
+
+                pos += step;
+                // Avoid infinite loop when step is 0 or window_size is larger than seq
+                if pos >= seq.len() {
+                    break;
+                }
+            }
+        }
+
+        false
     }
-
 }
 
 impl Default for MissingGeneRecoverer {
@@ -159,31 +185,39 @@ mod tests {
     }
 
     #[test]
-    fn test_search_sequence() {
-        let recoverer = MissingGeneRecoverer::new();
+    fn test_search_sequence_embedded() {
+        // Query embedded within a longer contig — HW mode should find it
+        let recoverer = MissingGeneRecoverer::new()
+            .with_min_identity(0.80);
         let query = b"ATCGATCGATCGATCG";
         let mut contigs = HashMap::new();
-        contigs.insert("contig1".to_string(), b"NNNATCGATCGATCGATCGNNN".to_vec());
+        contigs.insert("contig1".to_string(), b"NNNNATCGATCGATCGATCGNNNN".to_vec());
 
-        assert!(recoverer.simd_search_sequence(query, &contigs));
+        assert!(recoverer.search_in_contigs(query, &contigs));
     }
-}
-
-#[cfg(test)]
-mod simd_tests {
-    use super::*;
 
     #[test]
-    fn test_simd_kmer_search() {
-        let recoverer = MissingGeneRecoverer::new();
+    fn test_search_sequence_not_found() {
+        // Query not present in contig
+        let recoverer = MissingGeneRecoverer::new()
+            .with_min_identity(0.80);
         let query = b"ATCGATCGATCGATCG";
         let mut contigs = HashMap::new();
-        contigs.insert("contig1".to_string(), b"NNNATCGATCGATCGATCGNNN".to_vec());
-        
-        assert!(recoverer.simd_search_sequence(query, &contigs));
-        
-        let mut contigs_fail = HashMap::new();
-        contigs_fail.insert("contig1".to_string(), b"NNNATCGAACGATCGAACGNNN".to_vec());
-        assert!(!recoverer.simd_search_sequence(query, &contigs_fail));
+        contigs.insert("contig1".to_string(), b"GGGGAAAACCCCTTTT".to_vec());
+
+        assert!(!recoverer.search_in_contigs(query, &contigs));
+    }
+
+    #[test]
+    fn test_search_sequence_near_match() {
+        // Query with 1 substitution embedded in contig
+        let recoverer = MissingGeneRecoverer::new()
+            .with_min_identity(0.85);
+        let query = b"ATCGATCGATCGATCG";
+        let mut contigs = HashMap::new();
+        // 15/16 = 93.75% identity (1 substitution in 16 chars)
+        contigs.insert("contig1".to_string(), b"NNNNATCGATCGATCAATCGNNNN".to_vec());
+
+        assert!(recoverer.search_in_contigs(query, &contigs));
     }
 }

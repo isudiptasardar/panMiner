@@ -17,6 +17,7 @@ mod graph;
 mod json;
 mod struct_csv;
 mod sv_matrix;
+mod summary;
 mod parquet;
 mod html_viz;
 pub mod qc_stats;
@@ -27,6 +28,7 @@ pub use graph::GmlWriter;
 pub use json::JsonWriter;
 pub use struct_csv::write_structural_variants;
 pub use sv_matrix::SVMatrixWriter;
+pub use summary::write_summary_stats;
 pub use qc_stats::{write_qc_stats, write_qc_summary};
 
 #[cfg(feature = "parquet")]
@@ -85,6 +87,7 @@ impl OutputWriter {
             jsonl: None,
             struct_csv: None,
             sv_matrix: None,
+            summary_stats: None,
             #[cfg(feature = "parquet")]
             parquet: None,
             #[cfg(feature = "viz")]
@@ -95,11 +98,11 @@ impl OutputWriter {
         for format in &self.formats {
             match format {
                 OutputFormat::Matrix => {
-                    // Panaroo/Roary compatible CSV
+                    // Panaroo/Roary compatible CSV (14 metadata columns)
                     let csv_path = self.output_dir.join("gene_presence_absence.csv");
-                    MatrixWriter::write(matrix, &csv_path)?;
+                    MatrixWriter::write_roary_csv(matrix, &csv_path)?;
                     paths.matrix_csv = Some(csv_path);
-                    tracing::info!("Wrote gene presence/absence matrix (CSV)");
+                    tracing::info!("Wrote gene presence/absence matrix (Roary-compatible CSV)");
 
                     // Roary-compatible Rtab (binary TSV)
                     let rtab_path = self.output_dir.join("gene_presence_absence.Rtab");
@@ -204,6 +207,12 @@ impl OutputWriter {
             }
         }
 
+        // Always write summary statistics
+        let summary_path = self.output_dir.join("summary_statistics.txt");
+        write_summary_stats(matrix, &summary_path)?;
+        paths.summary_stats = Some(summary_path);
+        tracing::info!("Wrote summary statistics");
+
         Ok(paths)
     }
 }
@@ -237,6 +246,8 @@ pub struct OutputPaths {
     pub struct_csv: Option<PathBuf>,
     /// Structural variant matrix (TSV)
     pub sv_matrix: Option<PathBuf>,
+    /// Summary statistics file
+    pub summary_stats: Option<PathBuf>,
     /// Parquet output files
     #[cfg(feature = "parquet")]
     pub parquet: Option<PathBuf>,

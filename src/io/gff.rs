@@ -55,6 +55,16 @@ impl GffParser {
     /// This method extracts all features of type "gene" or "CDS"
     /// and returns them as Gene objects.
     pub fn parse_genes(&self) -> Result<Vec<Gene>> {
+        let (genes, _contigs) = self.parse_genes_and_contigs()?;
+        Ok(genes)
+    }
+
+    /// Parse genes and full contig DNA from the GFF3 file.
+    ///
+    /// Returns both the parsed genes and a map of contig name → full contig DNA
+    /// (including intergenic regions). This is needed for missing gene recovery,
+    /// which searches for genes in flanking regions between annotated genes.
+    pub fn parse_genes_and_contigs(&self) -> Result<(Vec<Gene>, HashMap<String, Vec<u8>>)> {
         let bytes = self.mmap.as_bytes();
 
         // Separate GFF lines and FASTA part
@@ -88,15 +98,21 @@ impl GffParser {
             })
             .collect();
 
-        // If we have FASTA data, extract sequences
+        // Parse full contig DNA from FASTA section
+        let mut contigs: HashMap<String, Vec<u8>> = HashMap::new();
+
+        // If we have FASTA data, extract sequences into genes and contigs
         if let Some(fasta) = fasta_bytes {
             let fasta_parser = crate::io::fasta::FastaIterator::new(fasta);
-            let contigs: HashMap<String, crate::graph::Sequence> = fasta_parser
+            let fasta_contigs: HashMap<String, crate::graph::Sequence> = fasta_parser
                 .map(|record| (record.id, record.sequence))
                 .collect();
 
+            // Store full contig DNA for missing gene recovery
+            contigs = fasta_contigs.clone();
+
             genes.par_iter_mut().for_each(|gene| {
-                if let Some(contig_seq) = contigs.get(&gene.contig) {
+                if let Some(contig_seq) = fasta_contigs.get(&gene.contig) {
                     if gene.start > 0 && gene.end <= contig_seq.len() && gene.start <= gene.end {
                         let mut seq = contig_seq[gene.start - 1..gene.end].to_vec();
 
@@ -120,7 +136,7 @@ impl GffParser {
             });
         }
 
-        Ok(genes)
+        Ok((genes, contigs))
     }
 
     /// Parse a single GFF3 line into a record.

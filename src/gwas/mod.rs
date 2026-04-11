@@ -1,6 +1,7 @@
 //! GWAS (Genome-Wide Association Studies) module.
 //!
-//! Provides integration with pyseer for GWAS analysis on pangenome data.
+//! Provides integration with GWAS tools (pyseer) for association
+//! analysis on pangenome data.
 
 pub mod traits;
 pub mod pyseer;

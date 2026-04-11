@@ -1,7 +1,7 @@
 //! Graph construction from gene clusters.
 
 use rayon::prelude::*;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use super::concurrent::ConcurrentGraph;
 use super::types::{ClusterId, Gene, GeneCluster, GenomeId, Node, PangenomeGraph};
@@ -14,17 +14,29 @@ use super::types::{ClusterId, Gene, GeneCluster, GenomeId, Node, PangenomeGraph}
 pub struct GraphBuilder {
     /// Minimum support threshold for keeping nodes
     min_support: usize,
+    /// Full contig DNA from GFF FASTA section (keyed by genome, contig name)
+    contig_dna: Option<HashMap<(GenomeId, String), Vec<u8>>>,
 }
 
 impl GraphBuilder {
     /// Create a new graph builder with default settings.
     pub fn new() -> Self {
-        Self { min_support: 1 }
+        Self { min_support: 1, contig_dna: None }
     }
 
     /// Set minimum support threshold.
     pub fn with_min_support(mut self, min_support: usize) -> Self {
         self.min_support = min_support;
+        self
+    }
+
+    /// Set full contig DNA from GFF FASTA section.
+    ///
+    /// When provided, nodes will store full contig DNA (including intergenic
+    /// regions) instead of concatenated gene sequences. This is needed for
+    /// missing gene recovery which searches flanking regions.
+    pub fn with_contig_dna(mut self, contig_dna: &HashMap<(GenomeId, String), Vec<u8>>) -> Self {
+        self.contig_dna = Some(contig_dna.clone());
         self
     }
 
@@ -63,13 +75,22 @@ impl GraphBuilder {
                 acc
             });
 
-        // Count genes per (genome, contig) for contig-end marking
-        let contig_gene_count: HashMap<(GenomeId, String), usize> = genes_by_contig
-            .iter()
-            .map(|((genome, contig), genes)| ((genome.clone(), contig.clone()), genes.len()))
-            .collect();
+        // Identify contig-end genes (first and last gene on each contig)
+        let mut contig_end_gene_ids: HashSet<String> = HashSet::new();
+        for ((_genome, _contig), contig_genes) in &genes_by_contig {
+            if contig_genes.len() == 1 {
+                // Single gene on contig → both start and end
+                contig_end_gene_ids.insert(contig_genes[0].id.to_string());
+            } else {
+                // Multiple genes: sort by position, mark first and last
+                let mut sorted: Vec<_> = contig_genes.iter().collect();
+                sorted.sort_by_key(|g| g.start);
+                contig_end_gene_ids.insert(sorted.first().unwrap().id.to_string());
+                contig_end_gene_ids.insert(sorted.last().unwrap().id.to_string());
+            }
+        }
 
-        // Extract contig sequences
+        // Extract contig sequences by concatenating gene sequences
         let contig_sequences: HashMap<(GenomeId, String), Vec<u8>> = genes_by_contig
             .iter()
             .map(|((genome, contig), genes)| {
@@ -81,6 +102,21 @@ impl GraphBuilder {
             })
             .collect();
 
+        // Build a mapping: cluster_id → set of (genome, contig) pairs it appears on
+        let cluster_to_contigs: HashMap<ClusterId, HashSet<(GenomeId, String)>> = clusters
+            .iter()
+            .map(|cluster| {
+                let contigs: HashSet<(GenomeId, String)> = cluster.genes.iter()
+                    .filter_map(|gid| {
+                        let genome = gene_to_genome.get(gid.as_str())?;
+                        let gene = genes.iter().find(|g| g.id == *gid)?;
+                        Some((genome.clone(), gene.contig.clone()))
+                    })
+                    .collect();
+                (cluster.id.clone(), contigs)
+            })
+            .collect();
+
         // Add nodes from clusters (parallel)
         clusters.par_iter().for_each(|cluster| {
             let mut node = Node::from_cluster(cluster);
@@ -89,15 +125,25 @@ impl GraphBuilder {
                     node.genomes.insert(genome_id.clone());
                 }
             }
-            // Add contig sequences if available and mark contig ends
-            for ((genome, contig), seq) in &contig_sequences {
-                if node.genomes.contains(genome) {
-                    node.add_contig_sequence(contig.clone(), seq.clone());
-                    // Mark as contig end if this node represents the only gene on its contig
-                    if let Some(genome_id) = node.genomes.iter().next() {
-                        if contig_gene_count.get(&(genome_id.clone(), contig.clone())).map(|c| *c == 1).unwrap_or(false) {
-                            node.is_contig_end = true;
-                        }
+            // Set is_contig_end if any gene in this cluster is at a contig boundary
+            for gene_id in &cluster.genes {
+                if contig_end_gene_ids.contains(gene_id.as_str()) {
+                    node.is_contig_end = true;
+                    break;
+                }
+            }
+            // Populate contig_sequences: prefer full contig DNA from GFF FASTA,
+            // fall back to concatenated gene sequences
+            if let Some(contigs) = cluster_to_contigs.get(&cluster.id) {
+                for (genome, contig_name) in contigs {
+                    // Try full contig DNA first (from GFF FASTA section)
+                    if let Some(full_dna) = self.contig_dna.as_ref()
+                        .and_then(|cd| cd.get(&(genome.clone(), contig_name.clone())))
+                    {
+                        node.add_contig_sequence(contig_name.clone(), full_dna.clone());
+                    } else if let Some(seq) = contig_sequences.get(&(genome.clone(), contig_name.clone())) {
+                        // Fall back to concatenated gene sequences
+                        node.add_contig_sequence(contig_name.clone(), seq.clone());
                     }
                 }
             }
@@ -229,5 +275,78 @@ mod tests {
         let graph = builder.build(&clusters, &genes);
 
         assert_eq!(graph.node_count(), 2);
+    }
+
+    #[test]
+    fn test_contig_end_marking() {
+        use super::super::types::{GeneId, Strand};
+
+        let mut cluster1 = GeneCluster::new("c1");
+        cluster1.support = 5;
+        cluster1.add_gene(GeneId::new("g1"));
+
+        let mut cluster2 = GeneCluster::new("c2");
+        cluster2.support = 3;
+        cluster2.add_gene(GeneId::new("g2"));
+
+        let mut cluster3 = GeneCluster::new("c3");
+        cluster3.support = 2;
+        cluster3.add_gene(GeneId::new("g3"));
+
+        let clusters = vec![cluster1, cluster2, cluster3];
+
+        // Two contigs: contig1 has g1+g2, contig2 has g3 alone
+        let gene1 = Gene {
+            id: GeneId::new("g1"), sequence: b"ATCG".to_vec(),
+            genome_id: GenomeId::new("genome1"), contig: "contig1".to_string(),
+            start: 1, end: 4, strand: Strand::Plus, annotation: None,
+        };
+        let gene2 = Gene {
+            id: GeneId::new("g2"), sequence: b"GCTA".to_vec(),
+            genome_id: GenomeId::new("genome1"), contig: "contig1".to_string(),
+            start: 10, end: 13, strand: Strand::Plus, annotation: None,
+        };
+        let gene3 = Gene {
+            id: GeneId::new("g3"), sequence: b"TTTT".to_vec(),
+            genome_id: GenomeId::new("genome1"), contig: "contig2".to_string(),
+            start: 1, end: 4, strand: Strand::Plus, annotation: None,
+        };
+
+        let genes = vec![gene1, gene2, gene3];
+        let graph = GraphBuilder::new().build_concurrent(&clusters, &genes);
+
+        // g1 and g2 are on contig1 — g1 is first (start=1), g2 is last (start=10)
+        // Both should be marked as contig-end
+        let node_c1 = graph.nodes.get(&ClusterId::new("c1")).unwrap();
+        let node_c2 = graph.nodes.get(&ClusterId::new("c2")).unwrap();
+        let node_c3 = graph.nodes.get(&ClusterId::new("c3")).unwrap();
+
+        assert!(node_c1.is_contig_end, "first gene on contig should be marked as contig end");
+        assert!(node_c2.is_contig_end, "last gene on contig should be marked as contig end");
+        assert!(node_c3.is_contig_end, "sole gene on contig should be marked as contig end");
+    }
+
+    #[test]
+    fn test_contig_sequences_populated() {
+        use super::super::types::{GeneId, Strand};
+
+        let mut cluster1 = GeneCluster::new("c1");
+        cluster1.support = 1;
+        cluster1.add_gene(GeneId::new("g1"));
+
+        let clusters = vec![cluster1];
+
+        let gene1 = Gene {
+            id: GeneId::new("g1"), sequence: b"ATCG".to_vec(),
+            genome_id: GenomeId::new("genome1"), contig: "contig1".to_string(),
+            start: 1, end: 4, strand: Strand::Plus, annotation: None,
+        };
+
+        let genes = vec![gene1];
+        let graph = GraphBuilder::new().build_concurrent(&clusters, &genes);
+
+        let node_c1 = graph.nodes.get(&ClusterId::new("c1")).unwrap();
+        assert!(!node_c1.contig_sequences.is_empty(),
+            "contig_sequences should be populated from gene sequences");
     }
 }
