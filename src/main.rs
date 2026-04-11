@@ -160,6 +160,30 @@ enum Commands {
         #[arg(short, long)]
         verbose: bool,
     },
+
+    /// Merge multiple PanMiner output directories
+    #[command(name = "merge")]
+    Merge {
+        /// Input directories to merge (at least 2)
+        #[arg(required = true)]
+        directories: Vec<PathBuf>,
+
+        /// Output directory for merged pangenome
+        #[arg(short, long, default_value = "merged_output")]
+        output: PathBuf,
+
+        /// Identity threshold for centroid clustering (0.5-1.0)
+        #[arg(long, default_value = "0.95")]
+        identity: f32,
+
+        /// Number of threads (0 = auto-detect)
+        #[arg(short = 't', long, default_value = "0")]
+        threads: usize,
+
+        /// Verbose output
+        #[arg(short, long)]
+        verbose: bool,
+    },
 }
 
 fn parse_mode(s: &str) -> CorrectionMode {
@@ -278,6 +302,38 @@ fn main() -> anyhow::Result<()> {
             }
 
             tracing::info!("QC complete. Results in: {:?}", output);
+            tracing::info!("Done.");
+        }
+        Some(Commands::Merge { directories, output, identity, threads, verbose }) => {
+            let filter = if verbose {
+                EnvFilter::new("debug")
+            } else {
+                EnvFilter::new("info")
+            };
+            tracing_subscriber::fmt()
+                .with_env_filter(filter)
+                .with_target(false)
+                .init();
+
+            tracing::info!("PanMiner merge v{}", panminer::VERSION);
+            let effective_threads = if threads == 0 {
+                std::thread::available_parallelism().map(|p| p.get()).unwrap_or(1)
+            } else {
+                threads
+            };
+
+            match panminer::merge_pangenomes(&directories, &output, identity, effective_threads) {
+                Ok(result) => {
+                    tracing::info!("Merged {} input directories", result.num_inputs);
+                    tracing::info!("Total nodes: {}, Total edges: {}", result.total_nodes, result.total_edges);
+                    tracing::info!("Merged nodes: {}", result.merged_nodes);
+                    tracing::info!("Output written to: {:?}", result.output_dir);
+                }
+                Err(e) => {
+                    tracing::error!("Merge failed: {}", e);
+                    return Err(anyhow::anyhow!("{}", e));
+                }
+            }
             tracing::info!("Done.");
         }
         None => {

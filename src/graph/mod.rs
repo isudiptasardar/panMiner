@@ -12,6 +12,7 @@ mod concurrent;
 mod matrix;
 mod builder;
 mod structural_variants;
+mod merge;
 
 pub use types::{Gene, GeneId, GenomeId, Sequence, Strand, Node, Edge, EdgeKey};
 pub use types::{GeneCluster, ClusterId, PangenomeGraph, GenomeMetadata};
@@ -19,3 +20,4 @@ pub use concurrent::ConcurrentGraph;
 pub use matrix::BitPackedMatrix;
 pub use builder::GraphBuilder;
 pub use structural_variants::{StructuralVariantDetector, StructuralVariant, VariantType};
+pub use merge::{merge_pangenomes, MergeResult};

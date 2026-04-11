@@ -40,7 +40,7 @@ pub mod pipeline;
 pub use config::PanminerConfig;
 pub use error::{Error, Result};
 pub use pipeline::PanminerPipeline;
-pub use graph::{PangenomeGraph, Gene, GeneCluster, Node, Edge};
+pub use graph::{PangenomeGraph, Gene, GeneCluster, Node, Edge, merge_pangenomes, MergeResult};
 pub use config::OutputFormat;
 pub use io::{BaktaRunner, BaktaDbType, translate, translate_with_stop};
 
