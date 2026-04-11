@@ -1654,6 +1654,7 @@ dependencies = [
  "parquet",
  "proptest",
  "pyo3",
+ "rand 0.8.5",
  "rayon",
  "serde",
  "serde_json",

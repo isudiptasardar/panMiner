@@ -34,6 +34,7 @@ pub mod graph;
 pub mod correction;
 pub mod output;
 pub mod gwas;
+pub mod downstream;
 pub mod pipeline;
 
 // Re-exports for convenience

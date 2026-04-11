@@ -70,6 +70,9 @@ tempfile = "3.10"
 # SIMD support (for sequence comparison)
 simdutf8 = "0.1"
 
+# Random sampling (for accumulation curves)
+rand = "0.8"
+
 # Sourmash (optional, for genome distance estimation)
 sourmash = { version = "0.15", optional = true }
 

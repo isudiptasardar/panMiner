@@ -9,6 +9,7 @@ use panminer::io::BaktaDbType;
 use panminer::output::{filter_presence_absence, parse_filter_types};
 use panminer::pipeline::PanminerPipeline;
 use panminer::io::QcRunner;
+use panminer::downstream::{DownstreamRunner, DownstreamResult};
 
 /// PanMiner - A modern pangenome analysis tool with GPU and CPU support.
 #[derive(Parser, Debug)]
@@ -192,6 +193,78 @@ enum Commands {
         #[arg(short, long)]
         verbose: bool,
     },
+
+    /// Run downstream analyses on PanMiner output
+    #[command(name = "analyze")]
+    Analyze {
+        /// PanMiner output directory from a prior run
+        #[arg(short = 'i', long)]
+        input: PathBuf,
+
+        /// Run GWAS analysis
+        #[arg(long)]
+        gwas: bool,
+
+        /// GWAS tool: pyseer (default), scoary2, spydrpick
+        #[arg(long, default_value = "pyseer")]
+        gwas_tool: String,
+
+        /// Path to phenotypes file (TSV: genome_id<tab>phenotype)
+        #[arg(long)]
+        phenotypes: Option<PathBuf>,
+
+        /// Run Panstripe evolutionary model
+        #[arg(long)]
+        panstripe: bool,
+
+        /// Phylogenetic tree in Newick format
+        #[arg(long)]
+        tree: Option<PathBuf>,
+
+        /// Run AMRFinderPlus resistome analysis
+        #[arg(long)]
+        amr: bool,
+
+        /// AMRFinderPlus database path
+        #[arg(long)]
+        amr_database: Option<PathBuf>,
+
+        /// Organism for taxon-specific AMR detection (e.g., "Escherichia coli")
+        #[arg(long)]
+        organism: Option<String>,
+
+        /// Extract gene neighborhood
+        #[arg(long)]
+        neighborhood: bool,
+
+        /// Seed gene/cluster ID for neighborhood extraction
+        #[arg(long)]
+        seed_gene: Option<String>,
+
+        /// Maximum neighborhood depth (default: 5)
+        #[arg(long)]
+        neighborhood_depth: Option<usize>,
+
+        /// Generate gene accumulation curves
+        #[arg(long)]
+        accumulation: bool,
+
+        /// Number of rarefaction samples (default: 100)
+        #[arg(long)]
+        num_samples: Option<usize>,
+
+        /// Export for GrapeTree
+        #[arg(long)]
+        export_grapetree: bool,
+
+        /// Export for iTOL
+        #[arg(long)]
+        export_itol: bool,
+
+        /// Verbose output
+        #[arg(short, long)]
+        verbose: bool,
+    },
 }
 
 fn parse_mode(s: &str) -> CorrectionMode {
@@ -342,6 +415,135 @@ fn main() -> anyhow::Result<()> {
                     return Err(anyhow::anyhow!("{}", e));
                 }
             }
+            tracing::info!("Done.");
+        }
+        Some(Commands::Analyze { input, gwas, gwas_tool, phenotypes, panstripe, tree, amr, amr_database, organism, neighborhood, seed_gene, neighborhood_depth, accumulation, num_samples, export_grapetree, export_itol, verbose }) => {
+            let filter = if verbose {
+                EnvFilter::new("debug")
+            } else {
+                EnvFilter::new("info")
+            };
+            tracing_subscriber::fmt()
+                .with_env_filter(filter)
+                .with_target(false)
+                .init();
+
+            tracing::info!("PanMiner analyze v{}", panminer::VERSION);
+
+            // Create downstream output directory
+            let downstream_dir = input.join("downstream");
+            std::fs::create_dir_all(&downstream_dir)?;
+
+            // GWAS analysis
+            if gwas {
+                tracing::info!("Running GWAS analysis with {}", gwas_tool);
+                match gwas_tool.as_str() {
+                    "pyseer" => {
+                        if panminer::gwas::PyseerRunner::is_installed() {
+                            // PyseerRunner works on in-memory graph/matrix, so we need to load first
+                            // For now, just verify the input directory has required files
+                            let presence_absence = input.join("gene_presence_absence.csv");
+                            if presence_absence.exists() {
+                                let mut runner = panminer::gwas::PyseerRunner::new();
+                                if let Some(ref phenotypes_file) = phenotypes {
+                                    runner.with_phenotypes(phenotypes_file.clone());
+                                }
+                                tracing::info!("PyseerRunner is available and ready");
+                                tracing::info!("GWAS results would be written to: {:?}", downstream_dir.join("pyseer_associations.csv"));
+                            } else {
+                                tracing::warn!("gene_presence_absence.csv not found in input directory");
+                            }
+                        } else {
+                            tracing::warn!("pyseer is not installed. Install with: pip install pyseer");
+                        }
+                    }
+                    "scoary2" => {
+                        tracing::info!("Scoary2Runner not yet implemented - coming in Phase 2");
+                    }
+                    "spydrpick" => {
+                        tracing::info!("SpydrPickRunner not yet implemented - coming in Phase 2");
+                    }
+                    _ => {
+                        tracing::warn!("Unknown GWAS tool: {}. Available: pyseer, scoary2, spydrpick", gwas_tool);
+                    }
+                }
+            }
+
+            // Panstripe evolutionary model
+            if panstripe {
+                tracing::info!("PanstripeRunner not yet implemented - coming in Phase 2");
+            }
+
+            // AMRFinderPlus resistome analysis
+            if amr {
+                tracing::info!("AmrFinderRunner not yet implemented - coming in Phase 2");
+            }
+
+            // Gene neighborhood extraction
+            if neighborhood {
+                if let Some(ref seed) = seed_gene {
+                    let depth = neighborhood_depth.unwrap_or(5);
+                    tracing::info!("Extracting gene neighborhood for seed '{}' with depth {}", seed, depth);
+
+                    use panminer::downstream::exploration::neighborhood::GeneNeighborhoodExtractor;
+                    use panminer::graph::ClusterId;
+
+                    let extractor = GeneNeighborhoodExtractor::new(ClusterId::new(seed.clone()), depth);
+                    match extractor.run(&input) {
+                        Ok(result) => {
+                            result.write_to(&downstream_dir)?;
+                            tracing::info!("Neighborhood extraction complete");
+                        }
+                        Err(e) => {
+                            tracing::error!("Neighborhood extraction failed: {}", e);
+                        }
+                    }
+                } else {
+                    tracing::warn!("--neighborhood requires --seed-gene");
+                }
+            }
+
+            // Gene accumulation curves
+            if accumulation {
+                tracing::info!("Generating gene accumulation curves");
+
+                use panminer::downstream::exploration::accumulation::AccumulationCurveRunner;
+
+                let mut runner = AccumulationCurveRunner::new();
+                if let Some(n) = num_samples {
+                    runner = runner.with_num_samples(n);
+                }
+
+                match runner.run(&input) {
+                    Ok(result) => {
+                        result.write_to(&downstream_dir)?;
+                        tracing::info!("Accumulation curve complete");
+                    }
+                    Err(e) => {
+                        tracing::error!("Accumulation curve failed: {}", e);
+                    }
+                }
+            }
+
+            // GrapeTree export
+            if export_grapetree {
+                tracing::info!("Exporting for GrapeTree");
+
+                use panminer::downstream::exploration::grapetree::GrapeTreeExportRunner;
+
+                let runner = GrapeTreeExportRunner::new(export_itol);
+                match runner.run(&input) {
+                    Ok(result) => {
+                        result.write_to(&downstream_dir)?;
+                        tracing::info!("GrapeTree export complete");
+                    }
+                    Err(e) => {
+                        tracing::error!("GrapeTree export failed: {}", e);
+                    }
+                }
+            }
+
+            tracing::info!("Downstream analysis complete. Results in: {:?}", downstream_dir);
             tracing::info!("Done.");
         }
         None => {
