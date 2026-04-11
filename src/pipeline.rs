@@ -14,6 +14,7 @@ use crate::graph::{
 use crate::io::{GffParser, CheckmQcRunner, QcRunner, GenomeQC, BaktaRunner, is_genbank_file};
 use crate::output::{OutputPaths, OutputWriter};
 use crate::output::qc_stats::{write_qc_stats, write_qc_summary};
+use crate::gwas::{PyseerRunner, GWASRunner};
 use std::fs;
 
 /// Main pipeline for PanMiner pangenome analysis.
@@ -41,7 +42,7 @@ impl PanminerPipeline {
         tracing::info!("Using {} threads", threads);
 
         // Phase 0: Pre-processing QC (optional)
-        let _qc_results = if self.config.enable_qc {
+        let qc_results = if self.config.enable_qc {
             tracing::info!("Phase 0: Running pre-processing QC");
             self.run_qc()?
         } else {
@@ -49,12 +50,40 @@ impl PanminerPipeline {
             vec![]
         };
 
-        // Phase 0.5: Re-annotate with Bakta (optional)
-        let input_files = if self.config.reannotate {
-            tracing::info!("Phase 0.5: Re-annotating inputs with Bakta");
-            self.reannotate_inputs(&self.config.input_files)?
+        // Filter out genomes that failed QC
+        let input_files = if !qc_results.is_empty() {
+            let passed_files: Vec<PathBuf> = self.config.input_files.iter()
+                .zip(qc_results.iter())
+                .filter(|(_, qc)| qc.passed)
+                .map(|(path, _)| path.clone())
+                .collect();
+
+            let removed = self.config.input_files.len() - passed_files.len();
+            if removed > 0 {
+                tracing::info!(
+                    "QC filtering: {} genomes passed, {} removed",
+                    passed_files.len(),
+                    removed
+                );
+            } else {
+                tracing::info!("QC filtering: all {} genomes passed", passed_files.len());
+            }
+
+            if passed_files.is_empty() {
+                return Err(Error::InvalidInput(
+                    "No genomes passed QC filtering. Use --no-qc to disable.".to_string()
+                ));
+            }
+
+            passed_files
         } else {
             self.config.input_files.clone()
+        };
+        let input_files = if self.config.reannotate {
+            tracing::info!("Phase 0.5: Re-annotating inputs with Bakta");
+            self.reannotate_inputs(&input_files)?
+        } else {
+            input_files
         };
 
         // Phase 1: Parse input files
@@ -160,6 +189,12 @@ impl PanminerPipeline {
         let writer = OutputWriter::new(&self.config);
         let paths = writer.write_all(&graph, &matrix)?;
 
+        // Phase 7: GWAS analysis (optional)
+        if self.config.run_gwas {
+            tracing::info!("Phase 7: Running GWAS analysis");
+            self.run_gwas(&graph, &matrix)?;
+        }
+
         // Clean up Bakta temporary files
         if self.config.reannotate && !self.config.keep_bakta_output {
             let bakta_tmp = self.config.output_dir.join("bakta_tmp");
@@ -236,6 +271,71 @@ impl PanminerPipeline {
         tracing::info!("Wrote QC summary to {}", summary_path.display());
 
         Ok(qc_results)
+    }
+
+    /// Run GWAS analysis using pyseer.
+    ///
+    /// Generates input files from the pangenome graph and matrix,
+    /// then invokes pyseer for gene-phenotype association testing.
+    fn run_gwas(&self, graph: &PangenomeGraph, matrix: &BitPackedMatrix) -> Result<()> {
+        let mut runner = PyseerRunner::new();
+
+        // If a phenotype file is provided, use it
+        if let Some(ref phenotype_path) = self.config.phenotype_file {
+            if !phenotype_path.exists() {
+                return Err(Error::InvalidInput(format!(
+                    "Phenotype file not found: {}",
+                    phenotype_path.display()
+                )));
+            }
+            runner.with_phenotypes(phenotype_path.clone());
+        }
+
+        // If a distance matrix file exists from QC, use it
+        let dist_path = self.config.output_dir.join("distance_matrix.csv");
+        if dist_path.exists() {
+            runner.with_distances(dist_path);
+        }
+
+        // Check if pyseer is available
+        if !runner.is_available() {
+            tracing::warn!("pyseer not installed. GWAS analysis skipped.");
+            tracing::warn!("Install with: pip install pyseer");
+            return Ok(());
+        }
+
+        // Run pyseer
+        match runner.run(graph, matrix) {
+            Ok(output) => {
+                // Write GWAS results
+                let gwas_path = self.config.output_dir.join("gwas_results.tsv");
+                let mut file = std::fs::File::create(&gwas_path)?;
+                use std::io::Write;
+                writeln!(file, "cluster_id\teffect_size\tp_value\tfdr\tsignificant")?;
+                for result in &output.results {
+                    writeln!(
+                        file,
+                        "{}\t{:.6}\t{:.2e}\t{:.2e}\t{}",
+                        result.snp_id,
+                        result.effect_size,
+                        result.p_value,
+                        result.fdr,
+                        if result.fdr < 0.05 { "yes" } else { "no" }
+                    )?;
+                }
+                tracing::info!(
+                    "GWAS: {} genes tested, {} significant (FDR < 0.05)",
+                    output.snp_count,
+                    output.significant_count
+                );
+                tracing::info!("Wrote GWAS results to {}", gwas_path.display());
+            }
+            Err(e) => {
+                tracing::warn!("GWAS analysis failed: {}", e);
+            }
+        }
+
+        Ok(())
     }
 
     /// Re-annotate input genomes with Bakta.
@@ -606,7 +706,8 @@ mod streaming_tests {
             ])
             .with_output_dir(temp_dir.path().to_path_buf())
             .with_temp_dir(temp_dir.path().to_path_buf())
-            .with_chunk_size(2); // 3 files, chunk size 2 -> 2 chunks
+            .with_chunk_size(2) // 3 files, chunk size 2 -> 2 chunks
+            .with_enable_qc(false); // Disable QC for test with mock files
 
         let pipeline = PanminerPipeline::new(config);
         let paths = pipeline.run().expect("Pipeline should run successfully with chunks");

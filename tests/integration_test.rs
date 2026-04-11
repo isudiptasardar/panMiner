@@ -61,6 +61,7 @@ fn test_full_pipeline_with_multiple_genomes() {
         .with_output_dir(output_dir.clone())
         .with_threads(2)
         .with_chunk_size(0)
+        .with_enable_qc(false)
         .with_outputs([OutputFormat::Matrix, OutputFormat::Graph, OutputFormat::Json].into_iter().collect());
 
     let pipeline = PanminerPipeline::new(config);
@@ -94,15 +95,15 @@ fn test_pipeline_qc_enabled() {
 
     let pipeline = PanminerPipeline::new(config);
 
-    // Run with QC - may fail if CheckM2 not installed, which is OK for this test
+    // Run with QC - may fail if CheckM2 not installed or genomes don't pass QC
     let result = pipeline.run();
 
-    // If CheckM2 is installed, QC should work
-    // If not, the test should still complete (QC just skipped)
+    // If CheckM2 is installed and genomes pass, pipeline succeeds
+    // If CheckM2 is not installed or genomes fail QC, pipeline errors
     if result.is_err() {
         let err = result.unwrap_err().to_string();
-        if err.contains("CheckM2") || err.contains("checkm2") {
-            // Expected - CheckM2 not installed
+        if err.contains("CheckM2") || err.contains("checkm2") || err.contains("QC filtering") {
+            // Expected - CheckM2 not installed or genomes filtered out
         } else {
             panic!("Unexpected error: {}", err);
         }
@@ -120,6 +121,7 @@ fn test_pipeline_different_correction_modes() {
             .with_input_files(vec![gff.clone()])
             .with_output_dir(temp_dir.path().join(format!("output_{:?}", mode)))
             .with_mode(mode.clone())
+            .with_enable_qc(false)
             .with_outputs([OutputFormat::Matrix, OutputFormat::Graph, OutputFormat::Json].into_iter().collect());
 
         let pipeline = PanminerPipeline::new(config);
@@ -138,6 +140,7 @@ fn test_pipeline_edge_case_single_genome() {
     let config = PanminerConfig::new()
         .with_input_files(vec![gff])
         .with_output_dir(output_dir.clone())
+        .with_enable_qc(false)
         .with_outputs([OutputFormat::Matrix, OutputFormat::Graph, OutputFormat::Json].into_iter().collect());
 
     let pipeline = PanminerPipeline::new(config);
@@ -160,6 +163,7 @@ fn test_debug_output() {
     let config = PanminerConfig::new()
         .with_input_files(vec![gff1, gff2])
         .with_output_dir(output_dir.clone())
+        .with_enable_qc(false)
         .with_outputs([OutputFormat::Matrix, OutputFormat::Graph, OutputFormat::Json].into_iter().collect());
 
     let pipeline = PanminerPipeline::new(config);
@@ -200,6 +204,7 @@ fn test_pipeline_output_matrix_content() {
     let config = PanminerConfig::new()
         .with_input_files(vec![gff1, gff2])
         .with_output_dir(output_dir.clone())
+        .with_enable_qc(false)
         .with_outputs([OutputFormat::Matrix, OutputFormat::Graph, OutputFormat::Json].into_iter().collect());
 
     let pipeline = PanminerPipeline::new(config);
@@ -233,6 +238,7 @@ fn test_pipeline_graph_structure() {
     let config = PanminerConfig::new()
         .with_input_files(vec![gff1, gff2])
         .with_output_dir(output_dir.clone())
+        .with_enable_qc(false)
         .with_outputs([OutputFormat::Matrix, OutputFormat::Graph, OutputFormat::Json].into_iter().collect());
 
     let pipeline = PanminerPipeline::new(config);
@@ -266,6 +272,7 @@ fn test_pipeline_json_output() {
     let config = PanminerConfig::new()
         .with_input_files(vec![gff])
         .with_output_dir(output_dir.clone())
+        .with_enable_qc(false)
         .with_outputs([OutputFormat::Matrix, OutputFormat::Graph, OutputFormat::Json].into_iter().collect());
 
     let pipeline = PanminerPipeline::new(config);
@@ -304,6 +311,7 @@ fn test_pipeline_with_realistic_gene_count() {
     let config = PanminerConfig::new()
         .with_input_files(vec![gff_path])
         .with_output_dir(output_dir.clone())
+        .with_enable_qc(false)
         .with_outputs([OutputFormat::Matrix, OutputFormat::Graph, OutputFormat::Json].into_iter().collect());
 
     let pipeline = PanminerPipeline::new(config);

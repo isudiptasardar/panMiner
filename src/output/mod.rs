@@ -32,9 +32,9 @@ pub use json::JsonWriter;
 pub use struct_csv::write_structural_variants;
 pub use sv_matrix::SVMatrixWriter;
 pub use summary::write_summary_stats;
+pub use codon::MacseRunner;
 pub use filter_pa::{FilterType, filter_presence_absence, parse_filter_types};
 pub use trim::{ClipKitRunner, TrimMode};
-pub use codon::MacseRunner;
 pub use qc_stats::{write_qc_stats, write_qc_summary};
 
 #[cfg(feature = "parquet")]
@@ -54,6 +54,9 @@ use crate::graph::BitPackedMatrix;
 pub struct OutputWriter {
     output_dir: PathBuf,
     formats: Vec<OutputFormat>,
+    trim_alignment: bool,
+    trim_mode: String,
+    codons: bool,
 }
 
 impl OutputWriter {
@@ -62,6 +65,9 @@ impl OutputWriter {
         Self {
             output_dir: config.output_dir.clone(),
             formats: config.outputs.iter().cloned().collect(),
+            trim_alignment: config.trim_alignment,
+            trim_mode: config.trim_mode.clone(),
+            codons: config.codons,
         }
     }
 
@@ -84,6 +90,7 @@ impl OutputWriter {
             matrix_csv: None,
             matrix_rtab: None,
             alignment: None,
+            codon_alignment: None,
             graph: None,
             reference_fasta: None,
             gene_data: None,
@@ -121,8 +128,49 @@ impl OutputWriter {
                     let path = self.output_dir.join("core_gene_alignment.aln");
                     let writer = AlignmentWriter::new();
                     writer.write_core(graph, &path)?;
-                    paths.alignment = Some(path);
                     tracing::info!("Wrote core alignment");
+
+                    // Trim alignment with ClipKIT if requested
+                    if self.trim_alignment {
+                        if let Some(clipkit) = ClipKitRunner::detect() {
+                            let trim_mode: TrimMode = self.trim_mode.parse().unwrap_or(TrimMode::SmartGap);
+                            let trimmed_path = self.output_dir.join("core_gene_alignment.trimmed.aln");
+                            match clipkit.trim(&path, &trimmed_path, trim_mode) {
+                                Ok(_) => {
+                                    paths.alignment = Some(trimmed_path);
+                                    tracing::info!("Trimmed alignment with ClipKIT (mode: {})", trim_mode);
+                                }
+                                Err(e) => {
+                                    tracing::warn!("ClipKIT trimming failed: {}. Using untrimmed alignment.", e);
+                                }
+                            }
+                        } else {
+                            tracing::warn!("ClipKIT not found. Install it with: pip install clipkit");
+                        }
+                    }
+
+                    // Codon alignment with MACSE if requested
+                    if self.codons {
+                        if let Some(macse) = MacseRunner::detect() {
+                            let codon_path = self.output_dir.join("core_gene_alignment.codon.aln");
+                            match macse.align_codons(&path, &codon_path) {
+                                Ok(_) => {
+                                    paths.codon_alignment = Some(codon_path);
+                                    tracing::info!("Wrote codon alignment with MACSE");
+                                }
+                                Err(e) => {
+                                    tracing::warn!("MACSE codon alignment failed: {}. Skipping codon alignment.", e);
+                                }
+                            }
+                        } else {
+                            tracing::warn!("MACSE not found. Install it from: https://bioweb.supagro.inra.fr/macse/");
+                        }
+                    }
+
+                    // Use trimmed path if available, otherwise original
+                    if paths.alignment.is_none() {
+                        paths.alignment = Some(path);
+                    }
                 }
                 OutputFormat::Graph => {
                     // Panaroo naming: final_graph.gml
@@ -234,6 +282,8 @@ pub struct OutputPaths {
     pub matrix_rtab: Option<PathBuf>,
     /// Core gene alignment
     pub alignment: Option<PathBuf>,
+    /// Codon alignment (MACSE)
+    pub codon_alignment: Option<PathBuf>,
     /// Final pangenome graph (GML)
     pub graph: Option<PathBuf>,
     /// Panaroo-style reference FASTA (all genes)

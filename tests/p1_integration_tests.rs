@@ -155,6 +155,7 @@ fn test_pipeline_contig_end_pruning() {
         .with_output_dir(output_dir.clone())
         .with_threads(2)
         .with_mode(CorrectionMode::Default)
+        .with_enable_qc(false)
         .with_outputs([OutputFormat::Matrix, OutputFormat::Graph, OutputFormat::Json, OutputFormat::SVMatrix].into_iter().collect());
 
     let pipeline = PanminerPipeline::new(config);
@@ -191,6 +192,7 @@ fn test_pipeline_sv_matrix_output() {
         .with_output_dir(output_dir.clone())
         .with_threads(2)
         .with_mode(CorrectionMode::Default)
+        .with_enable_qc(false)
         .with_outputs([OutputFormat::Matrix, OutputFormat::Graph, OutputFormat::Json, OutputFormat::SVMatrix].into_iter().collect());
 
     let pipeline = PanminerPipeline::new(config);
@@ -227,6 +229,7 @@ fn test_pipeline_with_paralogs() {
         .with_output_dir(output_dir.clone())
         .with_threads(2)
         .with_mode(CorrectionMode::Default)
+        .with_enable_qc(false)
         .with_outputs([OutputFormat::Matrix, OutputFormat::Graph, OutputFormat::Json].into_iter().collect());
 
     let pipeline = PanminerPipeline::new(config);
@@ -262,6 +265,7 @@ fn test_pipeline_large_dataset() {
         .with_output_dir(output_dir.clone())
         .with_threads(2)
         .with_mode(CorrectionMode::Default)
+        .with_enable_qc(false)
         .with_outputs([OutputFormat::Matrix, OutputFormat::Graph, OutputFormat::Json].into_iter().collect());
 
     let pipeline = PanminerPipeline::new(config);

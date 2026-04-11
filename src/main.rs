@@ -112,6 +112,14 @@ struct Cli {
     /// Generate codon alignments via MACSE
     #[arg(long)]
     codons: bool,
+
+    /// Run GWAS analysis with pyseer after pangenome construction
+    #[arg(long)]
+    gwas: bool,
+
+    /// Path to phenotype file for GWAS (TSV: genome_id phenotype_value)
+    #[arg(long)]
+    phenotype: Option<PathBuf>,
 }
 
 /// Subcommands for PanMiner.
@@ -357,7 +365,12 @@ fn main() -> anyhow::Result<()> {
                 .with_no_bakta_db_download(cli.no_bakta_db_download)
                 .with_trim_alignment(cli.trim_alignment)
                 .with_trim_mode(cli.trim_mode)
-                .with_codons(cli.codons);
+                .with_codons(cli.codons)
+                .with_run_gwas(cli.gwas);
+
+            if let Some(phenotype) = cli.phenotype {
+                config = config.with_phenotype_file(phenotype);
+            }
 
             if let Some(bakta_db) = cli.bakta_db {
                 config = config.with_bakta_db_path(bakta_db);

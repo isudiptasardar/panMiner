@@ -157,6 +157,12 @@ pub struct PanminerConfig {
     /// Generate codon alignments via MACSE
     pub codons: bool,
 
+    // GWAS
+    /// Run GWAS analysis (pyseer) after pangenome construction
+    pub run_gwas: bool,
+    /// Path to phenotype file for GWAS (TSV: genome_id phenotype_value)
+    pub phenotype_file: Option<PathBuf>,
+
     // GPU
     /// Force CPU even if GPU available
     pub force_cpu: bool,
@@ -200,6 +206,8 @@ impl Default for PanminerConfig {
             trim_alignment: false,
             trim_mode: String::from("smart-gap"),
             codons: false,
+            run_gwas: false,
+            phenotype_file: None,
             force_cpu: false,
             gpu_backend: GpuBackend::Auto,
             verbose: false,
@@ -360,6 +368,18 @@ impl PanminerConfig {
     /// Enable codon alignment via MACSE.
     pub fn with_codons(mut self, codons: bool) -> Self {
         self.codons = codons;
+        self
+    }
+
+    /// Enable GWAS analysis.
+    pub fn with_run_gwas(mut self, run_gwas: bool) -> Self {
+        self.run_gwas = run_gwas;
+        self
+    }
+
+    /// Set phenotype file path for GWAS.
+    pub fn with_phenotype_file(mut self, path: PathBuf) -> Self {
+        self.phenotype_file = Some(path);
         self
     }
 
