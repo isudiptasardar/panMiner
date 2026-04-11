@@ -8,7 +8,7 @@ dependencies:
   - rust>=1.70
   - cargo
 
-  # Optional: GPU-accelerated clustering (falls back to built-in CPU if absent)
+  # Core clustering (GPU-accelerated; falls back to built-in CPU if absent)
   - mmseqs2
 
   # Optional: Genome re-annotation
@@ -21,3 +21,16 @@ dependencies:
   - mafft        # default alignment tool
   - clustalo     # Clustal Omega
   - prank        # PRANK alignment
+
+  # Optional: GWAS and downstream tools
+  - pyseer       # Pan-GWAS with sequence-based kinship
+  - scoary2      # Gene-trait association (Fisher's exact test)
+  - spydrpick    # Epistasis detection (mutual information)
+  - r-base       # Required for Panstripe evolutionary models
+  - r-panstripe  # Phylogenetically-informed gene gain/loss rates (install via: Rscript -e 'install.packages("panstripe", repos="https://cloud.r-project.org")')
+
+  # Optional: AMR detection
+  - ncbi-amrfinder  # AMRFinderPlus for antimicrobial resistance detection
+
+  # Optional: Visualization
+  - grapetree   # GrapeTree for MST-based visualization
