@@ -2,15 +2,16 @@
 
 use rayon::prelude::*;
 use std::collections::HashMap;
+use std::path::PathBuf;
 
 use crate::config::PanminerConfig;
 use crate::clustering::{Clusterer, CpuClusterer, MMseqsRunner};
-use crate::correction::{ContaminationRemover, ContigEndPruner, FragmentMerger, MissingGeneRecoverer};
+use crate::correction::{ContaminationRemover, ContigEndPruner, FragmentMerger, MissingGeneRecoverer, MisassemblyEdgeCleaner, ParalogResolver, DistanceCache};
 use crate::error::{Error, Result};
 use crate::graph::{
     BitPackedMatrix, ConcurrentGraph, Gene, GeneCluster, Node, GenomeId, GraphBuilder, PangenomeGraph,
 };
-use crate::io::{GffParser, CheckmQcRunner, QcRunner, GenomeQC};
+use crate::io::{GffParser, CheckmQcRunner, QcRunner, GenomeQC, BaktaRunner, is_genbank_file};
 use crate::output::{OutputPaths, OutputWriter};
 use crate::output::qc_stats::{write_qc_stats, write_qc_summary};
 use std::fs;
@@ -48,9 +49,17 @@ impl PanminerPipeline {
             vec![]
         };
 
+        // Phase 0.5: Re-annotate with Bakta (optional)
+        let input_files = if self.config.reannotate {
+            tracing::info!("Phase 0.5: Re-annotating inputs with Bakta");
+            self.reannotate_inputs(&self.config.input_files)?
+        } else {
+            self.config.input_files.clone()
+        };
+
         // Phase 1: Parse input files
-        tracing::info!("Phase 1: Parsing {} input files", self.config.input_files.len());
-        let (genes, genome_ids) = self.parse_inputs()?;
+        tracing::info!("Phase 1: Parsing {} input files", input_files.len());
+        let (genes, genome_ids, contig_dna) = self.parse_inputs_from(&input_files)?;
         tracing::info!("Parsed {} genes from {} genomes", genes.len(), genome_ids.len());
 
         if genes.is_empty() {
@@ -59,8 +68,15 @@ impl PanminerPipeline {
 
         // Phase 2: Cluster genes
         tracing::info!("Phase 2: Clustering genes");
-        let clusters = self.cluster_genes(&genes)?;
+        let mut clusters = self.cluster_genes(&genes)?;
         tracing::info!("Found {} clusters", clusters.len());
+
+        // Mark paralog clusters (same genome appears multiple times in a cluster)
+        ParalogResolver::mark_paralog_clusters(&mut clusters, &genes);
+        let paralog_count = clusters.iter().filter(|c| c.is_paralog).count();
+        if paralog_count > 0 {
+            tracing::info!("Marked {} clusters as containing paralogs", paralog_count);
+        }
 
         // Phase 3: Build graph
         let concurrent_graph = if self.config.chunk_size > 0 && self.config.input_files.len() > self.config.chunk_size {
@@ -69,7 +85,7 @@ impl PanminerPipeline {
             let chunk_files = streaming.process_chunks_with_clusters(&self.config.input_files, &clusters)?;
 
             let graph = ConcurrentGraph::with_capacity(clusters.len());
-            
+
             let gene_to_genome: std::collections::HashMap<String, GenomeId> = genes
                 .iter()
                 .map(|g| (g.id.to_string(), g.genome_id.clone()))
@@ -82,6 +98,18 @@ impl PanminerPipeline {
                         node.genomes.insert(genome_id.clone());
                     }
                 }
+                // Add contig DNA to nodes in streaming path too
+                for gene_id in &cluster.genes {
+                    if let Some(genome_id) = gene_to_genome.get(gene_id.as_str()) {
+                        let gene = genes.iter().find(|g| g.id == *gene_id);
+                        if let Some(g) = gene {
+                            let key = (genome_id.clone(), g.contig.clone());
+                            if let Some(full_dna) = contig_dna.get(&key) {
+                                node.add_contig_sequence(g.contig.clone(), full_dna.clone());
+                            }
+                        }
+                    }
+                }
                 graph.add_node(node);
             });
 
@@ -92,7 +120,7 @@ impl PanminerPipeline {
             graph
         } else {
             tracing::info!("Phase 3: Building pangenome graph (in-memory)");
-            self.build_graph(&clusters, &genes)
+            self.build_graph(&clusters, &genes, &contig_dna)
         };
 
         tracing::info!(
@@ -100,6 +128,18 @@ impl PanminerPipeline {
             concurrent_graph.node_count(),
             concurrent_graph.edge_count()
         );
+
+        // Write pre-filtered graph for debugging/comparison
+        fs::create_dir_all(&self.config.output_dir)?;
+        {
+            let pre_graph = concurrent_graph.to_standard();
+            let pre_graph_path = self.config.output_dir.join("pre_filt_graph.gml");
+            if let Err(e) = crate::output::GmlWriter::write(&pre_graph, &pre_graph_path) {
+                tracing::warn!("Failed to write pre-filtered graph: {}", e);
+            } else {
+                tracing::info!("Wrote pre_filt_graph.gml");
+            }
+        }
 
         // Phase 4: Error correction
         tracing::info!("Phase 4: Running error correction");
@@ -119,6 +159,18 @@ impl PanminerPipeline {
         tracing::info!("Phase 6: Generating outputs");
         let writer = OutputWriter::new(&self.config);
         let paths = writer.write_all(&graph, &matrix)?;
+
+        // Clean up Bakta temporary files
+        if self.config.reannotate && !self.config.keep_bakta_output {
+            let bakta_tmp = self.config.output_dir.join("bakta_tmp");
+            if bakta_tmp.exists() {
+                if let Err(e) = std::fs::remove_dir_all(&bakta_tmp) {
+                    tracing::warn!("Failed to clean up Bakta temp files: {}", e);
+                } else {
+                    tracing::info!("Cleaned up Bakta temporary files");
+                }
+            }
+        }
 
         tracing::info!("Pipeline complete");
         Ok(paths)
@@ -186,38 +238,127 @@ impl PanminerPipeline {
         Ok(qc_results)
     }
 
-    /// Parse all input GFF3 files in parallel.
-    fn parse_inputs(&self) -> Result<(Vec<Gene>, Vec<GenomeId>)> {
-        let results: Vec<(Vec<Gene>, GenomeId)> = self.config.input_files
+    /// Re-annotate input genomes with Bakta.
+    ///
+    /// Runs Bakta on FASTA/GenBank inputs and collects GFF3 output paths.
+    /// GFF files are passed through unchanged.
+    fn reannotate_inputs(&self, input_files: &[PathBuf]) -> Result<Vec<PathBuf>> {
+        // Check if any files need re-annotation
+        let needs_annotation = input_files.iter().any(|f: &PathBuf| {
+            let ext = f.extension().and_then(|e: &std::ffi::OsStr| e.to_str()).unwrap_or("");
+            !matches!(ext.to_lowercase().as_str(), "gff" | "gff3")
+        });
+
+        if !needs_annotation {
+            tracing::info!("All input files are already in GFF3 format, skipping re-annotation");
+            return Ok(input_files.to_vec());
+        }
+
+        // Try to detect Bakta
+        let runner = match BaktaRunner::detect() {
+            Some(runner) => runner,
+            None => {
+                tracing::warn!(
+                    "Bakta not found. Install with: conda install -c conda-forge -c bioconda bakta"
+                );
+                tracing::warn!("Falling back to using input files directly");
+
+                // Check if any files are GenBank format (can't be used without Bakta)
+                for f in input_files {
+                    if is_genbank_file(f) {
+                        return Err(crate::Error::genbank_requires_bakta(f));
+                    }
+                }
+
+                return Ok(input_files.to_vec());
+            }
+        };
+
+        // Resolve database path
+        let db_path = if let Some(ref path) = self.config.bakta_db_path {
+            path.clone()
+        } else {
+            let resolved = BaktaRunner::resolve_db(None);
+            if !resolved.exists() {
+                if self.config.no_bakta_db_download {
+                    return Err(crate::Error::bakta_db_not_found(&resolved));
+                }
+                // Auto-download the database
+                let home = std::env::var("HOME")
+                    .or_else(|_| std::env::var("USERPROFILE"))
+                    .unwrap_or_else(|_| ".".to_string());
+                let bakta_dir = PathBuf::from(home).join(".bakta");
+                std::fs::create_dir_all(&bakta_dir)?;
+                BaktaRunner::download_db(&bakta_dir, self.config.bakta_db_type)?
+            } else {
+                resolved
+            }
+        };
+
+        let bakta_threads = if self.config.bakta_threads > 0 {
+            self.config.bakta_threads
+        } else {
+            self.config.effective_threads()
+        };
+
+        // Use the detected bakta binary path and resolved db_path
+        let annotator = BaktaRunner::new(runner.name_path(), db_path)
+            .with_threads(bakta_threads)
+            .with_output_dir(self.config.output_dir.clone())
+            .with_keep_contig_headers(true);
+
+        tracing::info!("Running Bakta re-annotation on {} files", input_files.len());
+
+        let gff_paths = annotator.annotate_batch(input_files)?;
+
+        tracing::info!("Re-annotation complete: {} GFF3 files", gff_paths.len());
+        Ok(gff_paths)
+    }
+
+    /// Parse all input GFF3 files in parallel (using config input_files).
+    ///
+    /// Returns genes, genome IDs, and full contig DNA from the GFF FASTA section.
+    #[allow(dead_code)]
+    fn parse_inputs(&self) -> Result<(Vec<Gene>, Vec<GenomeId>, HashMap<(GenomeId, String), Vec<u8>>)> {
+        self.parse_inputs_from(&self.config.input_files)
+    }
+
+    /// Parse input GFF3 files in parallel (from explicit file list).
+    fn parse_inputs_from(&self, input_files: &[PathBuf]) -> Result<(Vec<Gene>, Vec<GenomeId>, HashMap<(GenomeId, String), Vec<u8>>)> {
+        let results: Vec<(Vec<Gene>, GenomeId, HashMap<String, Vec<u8>>)> = input_files
             .par_iter()
-            .map(|path| {
+            .map(|path: &PathBuf| {
                 let genome_id = GenomeId::new(
                     path.file_stem()
-                        .and_then(|s| s.to_str())
+                        .and_then(|s: &std::ffi::OsStr| s.to_str())
                         .unwrap_or("unknown")
                 );
 
-                let genes = GffParser::open(path, genome_id.clone())
-                    .and_then(|p: crate::io::GffParser| p.parse_genes())
+                let (genes, contigs) = GffParser::open(path, genome_id.clone())
+                    .and_then(|p: crate::io::GffParser| p.parse_genes_and_contigs())
                     .unwrap_or_default();
 
                 if genes.is_empty() {
                     tracing::warn!("No genes found in {:?}", path);
                 }
 
-                (genes, genome_id)
+                (genes, genome_id, contigs)
             })
             .collect();
 
         let mut all_genes = Vec::new();
         let mut genome_ids = Vec::new();
+        let mut all_contigs: HashMap<(GenomeId, String), Vec<u8>> = HashMap::new();
 
-        for (genes, genome_id) in results {
+        for (genes, genome_id, contigs) in results {
             all_genes.extend(genes);
-            genome_ids.push(genome_id);
+            genome_ids.push(genome_id.clone());
+            for (contig_name, seq) in contigs {
+                all_contigs.insert((genome_id.clone(), contig_name), seq);
+            }
         }
 
-        Ok((all_genes, genome_ids))
+        Ok((all_genes, genome_ids, all_contigs))
     }
 
     /// Cluster genes using MMseqs2-GPU or CPU fallback.
@@ -237,16 +378,28 @@ impl PanminerPipeline {
         clusterer.cluster(genes, self.config.cluster_identity)
     }
 
-    /// Build the pangenome graph from clusters and genes.
-    fn build_graph(&self, clusters: &[GeneCluster], genes: &[Gene]) -> ConcurrentGraph {
+    /// Build the pangenome graph from clusters, genes, and contig DNA.
+    fn build_graph(&self, clusters: &[GeneCluster], genes: &[Gene], contig_dna: &HashMap<(GenomeId, String), Vec<u8>>) -> ConcurrentGraph {
         let builder = GraphBuilder::new()
-            .with_min_support(self.config.min_support);
+            .with_min_support(self.config.min_support)
+            .with_contig_dna(contig_dna);
 
         builder.build_concurrent(clusters, genes)
     }
 
     /// Run error correction on the graph.
     fn run_corrections(&self, graph: &ConcurrentGraph, num_genomes: usize) -> Result<()> {
+        // Phase 4.0: Paralog resolution (must run before other corrections)
+        // Detects paralog clusters and merges copies that share synteny context
+        tracing::info!("Phase 4.0: Running paralog resolution");
+        let resolver = ParalogResolver::new();
+        let paralog_stats = resolver.resolve(graph)?;
+        tracing::info!(
+            "Paralog resolution: {} paralogs detected, {} merges",
+            paralog_stats.paralogs_detected,
+            paralog_stats.nodes_merged
+        );
+
         // Contamination removal
         let remover = ContaminationRemover::from_mode(&self.config.mode, num_genomes);
         remover.remove(graph)?;
@@ -278,8 +431,11 @@ impl PanminerPipeline {
             tracing::warn!("No centroid sequences available for fragment merging");
         }
 
+        // Create distance cache for reuse across correction passes (matches Panaroo Step 7→10)
+        let mut distance_cache = DistanceCache::new();
+
         merger.correct_mistranslations(graph, &sequences)?;
-        merger.collapse_gene_families(graph, &sequences)?;
+        merger.collapse_gene_families_with_cache(graph, &sequences, Some(&mut distance_cache))?;
 
         // Phase 4.5: Missing gene recovery (optional)
         // This searches for genes that may have been missed during annotation
@@ -287,6 +443,28 @@ impl PanminerPipeline {
         // It requires contig sequences to be stored in the graph nodes.
         tracing::info!("Phase 4.5: Running missing gene recovery");
         self.run_missing_gene_recovery(graph)?;
+
+        // Phase 4.6: Re-collapse families after missing gene recovery (reuses distance cache)
+        tracing::info!("Phase 4.6: Re-collapsing gene families after missing gene recovery");
+        let sequences_after_recovery: std::collections::HashMap<String, Vec<u8>> = graph
+            .nodes
+            .iter()
+            .map(|entry| {
+                let cluster_id = entry.key();
+                let node = entry.value();
+                (cluster_id.to_string(), node.centroid_sequence.clone().unwrap_or_default())
+            })
+            .filter(|(_, seq)| !seq.is_empty())
+            .collect();
+
+        let merger2 = FragmentMerger::new()
+            .with_collapse_threshold(self.config.collapse_threshold);
+        merger2.collapse_gene_families_with_cache(graph, &sequences_after_recovery, Some(&mut distance_cache))?;
+
+        // Phase 4.7: Misassembly edge cleaning
+        let cleaner = MisassemblyEdgeCleaner::from_mode(&self.config.mode, num_genomes);
+        let cleaning_stats = cleaner.clean(graph)?;
+        tracing::info!("Misassembly edge cleaning: removed {} edges", cleaning_stats.edges_removed);
 
         Ok(())
     }

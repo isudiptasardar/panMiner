@@ -17,4 +17,4 @@ pub use fasta::FastaParser;
 pub use compress::{CompressedWriter, CompressedReader};
 pub use streaming::{StreamingPipeline, PartialGraph};
 pub use qc_traits::{GenomeQC, QcMode, QcRunner, CheckmQcRunner};
-pub use bakta::{BaktaRunner, BaktaDbType};
+pub use bakta::{BaktaRunner, BaktaDbType, is_gff_file, is_genbank_file, genbank_to_fasta};

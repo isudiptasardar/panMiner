@@ -250,6 +250,11 @@ impl BaktaRunner {
     pub fn name(&self) -> &str {
         "Bakta"
     }
+
+    /// Get the path to the Bakta binary.
+    pub fn name_path(&self) -> PathBuf {
+        self.bakta_path.clone()
+    }
 }
 
 /// Find the bakta executable on the system PATH.
@@ -335,7 +340,7 @@ fn resolve_db_path(explicit_path: Option<&Path>) -> PathBuf {
 }
 
 /// Check if a file has a GFF/GFF3 extension.
-fn is_gff_file(path: &Path) -> bool {
+pub fn is_gff_file(path: &Path) -> bool {
     path.extension()
         .and_then(|e| e.to_str())
         .map(|e| matches!(e.to_lowercase().as_str(), "gff" | "gff3"))
@@ -343,7 +348,7 @@ fn is_gff_file(path: &Path) -> bool {
 }
 
 /// Check if a file has a GenBank extension.
-fn is_genbank_file(path: &Path) -> bool {
+pub fn is_genbank_file(path: &Path) -> bool {
     path.extension()
         .and_then(|e| e.to_str())
         .map(|e| matches!(e.to_lowercase().as_str(), "gb" | "gbk" | "gbff" | "genbank"))
