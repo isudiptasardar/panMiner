@@ -42,6 +42,7 @@ pub use error::{Error, Result};
 pub use pipeline::PanminerPipeline;
 pub use graph::{PangenomeGraph, Gene, GeneCluster, Node, Edge};
 pub use config::OutputFormat;
+pub use io::{BaktaRunner, BaktaDbType};
 
 /// Prelude module for common imports
 pub mod prelude {
