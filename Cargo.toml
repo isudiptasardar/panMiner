@@ -70,6 +70,9 @@ tempfile = "3.10"
 # SIMD support (for sequence comparison)
 simdutf8 = "0.1"
 
+# Sourmash (optional, for genome distance estimation)
+sourmash = { version = "0.15", optional = true }
+
 [dev-dependencies]
 criterion = "0.5"
 tempfile = "3.10"
@@ -82,7 +85,8 @@ mmseqs = []
 parquet = ["dep:parquet", "dep:arrow"]
 python = ["dep:pyo3"]
 viz = ["dep:tera"]
-full = ["cpu", "mmseqs", "parquet", "viz"]
+sourmash = ["dep:sourmash"]
+full = ["cpu", "mmseqs", "parquet", "viz", "sourmash"]
 
 [profile.release]
 opt-level = 3

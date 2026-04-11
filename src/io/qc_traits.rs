@@ -1,8 +1,9 @@
 //! Quality control runner traits and definitions.
 //!
 //! Provides traits for running pre-processing QC tools:
-//! - Mash: Sketch-based distance estimation for contamination detection
-//! - CheckM: Assembly completeness and contamination scoring
+//! - CheckM2: Assembly completeness and contamination scoring
+//! - FastANI: Pairwise ANI for species boundary detection
+//! - Sourmash: MinHash-based distance estimation (optional feature)
 
 use crate::error::{Error, Result};
 use std::path::PathBuf;
@@ -37,6 +38,64 @@ pub enum QcMode {
     Default,
     /// Sensitive QC - minimal filtering
     Sensitive,
+}
+
+/// Genome distance information from ANI/distance calculations.
+#[derive(Debug, Clone)]
+pub struct GenomeDistance {
+    /// Genome names (ordered same as matrix rows/columns)
+    pub genome_names: Vec<String>,
+    /// Pairwise ANI/distance matrix (0.0-1.0)
+    pub distance_matrix: Vec<Vec<f64>>,
+    /// Method used for distance computation
+    pub method: DistanceMethod,
+}
+
+/// Method used for computing genome distances.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DistanceMethod {
+    /// FastANI subprocess
+    FastANI,
+    /// Sourmash MinHash sketches
+    Sourmash,
+    /// No distance tool available
+    None,
+}
+
+impl std::fmt::Display for DistanceMethod {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            DistanceMethod::FastANI => write!(f, "FastANI"),
+            DistanceMethod::Sourmash => write!(f, "sourmash"),
+            DistanceMethod::None => write!(f, "none"),
+        }
+    }
+}
+
+impl GenomeDistance {
+    /// Write the distance matrix to a CSV file.
+    pub fn write_csv(&self, path: &std::path::Path) -> Result<()> {
+        let mut file = std::fs::File::create(path)?;
+
+        // Header
+        use std::io::Write;
+        write!(file, "genome")?;
+        for name in &self.genome_names {
+            write!(file, ",{}", name)?;
+        }
+        writeln!(file)?;
+
+        // Rows
+        for (i, name) in self.genome_names.iter().enumerate() {
+            write!(file, "{}", name)?;
+            for j in 0..self.genome_names.len() {
+                write!(file, ",{:.6}", self.distance_matrix[i][j])?;
+            }
+            writeln!(file)?;
+        }
+
+        Ok(())
+    }
 }
 
 impl QcMode {
@@ -128,6 +187,56 @@ impl CheckmQcRunner {
 impl Default for CheckmQcRunner {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+impl CheckmQcRunner {
+    /// Compute pairwise ANI/distance matrix for genomes.
+    ///
+    /// Tries sourmash first (if feature enabled), then FastANI,
+    /// then returns None if no distance tool is available.
+    pub fn compute_distance_matrix(
+        &self,
+        genome_paths: &[PathBuf],
+    ) -> Option<GenomeDistance> {
+        // Try sourmash first (if feature enabled)
+        #[cfg(feature = "sourmash")]
+        {
+            if let Ok(matrix) = crate::io::compute_distance_matrix(genome_paths) {
+                let names: Vec<String> = genome_paths
+                    .iter()
+                    .filter_map(|p| p.file_stem().map(|s| s.to_string_lossy().to_string()))
+                    .collect();
+                return Some(GenomeDistance {
+                    genome_names: names,
+                    distance_matrix: matrix,
+                    method: DistanceMethod::Sourmash,
+                });
+            }
+        }
+
+        // Try FastANI
+        if let Some(runner) = crate::io::FastAniRunner::detect() {
+            match runner.compute_ani_matrix(genome_paths) {
+                Ok(matrix) => {
+                    let names: Vec<String> = genome_paths
+                        .iter()
+                        .filter_map(|p| p.file_stem().map(|s| s.to_string_lossy().to_string()))
+                        .collect();
+                    return Some(GenomeDistance {
+                        genome_names: names,
+                        distance_matrix: matrix,
+                        method: DistanceMethod::FastANI,
+                    });
+                }
+                Err(e) => {
+                    tracing::warn!("FastANI distance computation failed: {}", e);
+                }
+            }
+        }
+
+        tracing::warn!("No distance estimation tool available. Install FastANI or enable sourmash feature.");
+        None
     }
 }
 

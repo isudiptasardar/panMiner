@@ -8,6 +8,7 @@ use panminer::config::{CorrectionMode, OutputFormat, PanminerConfig, QcMode};
 use panminer::io::BaktaDbType;
 use panminer::output::{filter_presence_absence, parse_filter_types};
 use panminer::pipeline::PanminerPipeline;
+use panminer::io::QcRunner;
 
 /// PanMiner - A modern pangenome analysis tool with GPU and CPU support.
 #[derive(Parser, Debug)]
@@ -123,6 +124,30 @@ enum Commands {
         #[arg(long, default_value = "0.5")]
         length_threshold: f32,
     },
+
+    /// Run genome QC (CheckM2 completeness/contamination + distance estimation)
+    #[command(name = "qc")]
+    Qc {
+        /// Input genome files (GFF3/FASTA/GenBank)
+        #[arg(required = true)]
+        input: Vec<PathBuf>,
+
+        /// Output directory for QC results
+        #[arg(short, long, default_value = "qc_output")]
+        output: PathBuf,
+
+        /// QC mode: strict, default, sensitive
+        #[arg(long, default_value = "default")]
+        qc_mode: String,
+
+        /// Compute pairwise ANI/distance matrix
+        #[arg(long)]
+        distance: bool,
+
+        /// Verbose output
+        #[arg(short, long)]
+        verbose: bool,
+    },
 }
 
 fn parse_mode(s: &str) -> CorrectionMode {
@@ -185,6 +210,62 @@ fn main() -> anyhow::Result<()> {
             let types = parse_filter_types(&filter_type);
             filter_presence_absence(&input, &output, &types, length_threshold)?;
             tracing::info!("Filtered output written to: {:?}", output);
+            tracing::info!("Done.");
+        }
+        Some(Commands::Qc { input, output, qc_mode: _, distance, verbose }) => {
+            let filter = if verbose {
+                EnvFilter::new("debug")
+            } else {
+                EnvFilter::new("info")
+            };
+            tracing_subscriber::fmt()
+                .with_env_filter(filter)
+                .with_target(false)
+                .init();
+
+            tracing::info!("PanMiner qc v{}", panminer::VERSION);
+
+            // Create output directory
+            std::fs::create_dir_all(&output)?;
+
+            // Run CheckM2 QC
+            let qc_runner = panminer::io::CheckmQcRunner::new();
+            let mut qc_results = Vec::new();
+
+            for genome_path in &input {
+                match qc_runner.run_qc(genome_path) {
+                    Ok(qc) => {
+                        tracing::info!("QC for {}: completeness={:.1}%, contamination={:.1}%",
+                            qc.genome_id, qc.completeness, qc.contamination);
+                        qc_results.push(qc);
+                    }
+                    Err(e) => {
+                        tracing::warn!("QC failed for {:?}: {}", genome_path, e);
+                    }
+                }
+            }
+
+            // Write QC stats
+            let qc_stats_path = output.join("qc_stats.csv");
+            panminer::output::write_qc_stats(&qc_results, &qc_stats_path)?;
+            tracing::info!("Wrote QC stats to: {:?}", qc_stats_path);
+
+            let qc_summary_path = output.join("qc_summary.txt");
+            panminer::output::write_qc_summary(&qc_results, &qc_summary_path)?;
+            tracing::info!("Wrote QC summary to: {:?}", qc_summary_path);
+
+            // Optionally compute distance matrix
+            if distance && !input.is_empty() {
+                if let Some(dist) = qc_runner.compute_distance_matrix(&input) {
+                    let dist_path = output.join("distance_matrix.csv");
+                    dist.write_csv(&dist_path)?;
+                    tracing::info!("Wrote distance matrix to: {:?}", dist_path);
+                } else {
+                    tracing::warn!("No distance tool available. Install FastANI or enable sourmash feature.");
+                }
+            }
+
+            tracing::info!("QC complete. Results in: {:?}", output);
             tracing::info!("Done.");
         }
         None => {
