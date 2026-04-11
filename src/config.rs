@@ -4,6 +4,7 @@ use std::collections::HashSet;
 use std::path::PathBuf;
 
 pub use crate::io::QcMode;
+pub use crate::io::BaktaDbType;
 
 /// Correction mode for error handling.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -128,6 +129,20 @@ pub struct PanminerConfig {
     /// Path to CheckM2 database (optional)
     pub checkm_database_path: Option<PathBuf>,
 
+    // Re-annotation
+    /// Re-annotate input genomes with Bakta before analysis
+    pub reannotate: bool,
+    /// Path to Bakta database directory
+    pub bakta_db_path: Option<PathBuf>,
+    /// Bakta database type for auto-download (full or light)
+    pub bakta_db_type: BaktaDbType,
+    /// Number of threads for Bakta (0 = same as pipeline)
+    pub bakta_threads: usize,
+    /// Fail if Bakta DB not found instead of auto-downloading
+    pub no_bakta_db_download: bool,
+    /// Keep Bakta output files after pipeline completes
+    pub keep_bakta_output: bool,
+
     // Output
     /// Output formats to generate
     pub outputs: HashSet<OutputFormat>,
@@ -167,6 +182,12 @@ impl Default for PanminerConfig {
             enable_qc: true,
             qc_mode: QcMode::Default,
             checkm_database_path: None,
+            reannotate: false,
+            bakta_db_path: None,
+            bakta_db_type: BaktaDbType::Full,
+            bakta_threads: 0,
+            no_bakta_db_download: false,
+            keep_bakta_output: false,
             outputs: [OutputFormat::Matrix, OutputFormat::Alignment].into_iter().collect(),
             alignment_tool: AlignmentTool::default(),
             output_prefix: String::from("panminer"),
@@ -276,6 +297,42 @@ impl PanminerConfig {
     /// Set path to CheckM2 database.
     pub fn with_checkm_database_path(mut self, path: PathBuf) -> Self {
         self.checkm_database_path = Some(path);
+        self
+    }
+
+    /// Enable Bakta re-annotation of input genomes.
+    pub fn with_reannotate(mut self, enable: bool) -> Self {
+        self.reannotate = enable;
+        self
+    }
+
+    /// Set path to Bakta database.
+    pub fn with_bakta_db_path(mut self, path: PathBuf) -> Self {
+        self.bakta_db_path = Some(path);
+        self
+    }
+
+    /// Set Bakta database type (full or light).
+    pub fn with_bakta_db_type(mut self, db_type: BaktaDbType) -> Self {
+        self.bakta_db_type = db_type;
+        self
+    }
+
+    /// Set number of threads for Bakta.
+    pub fn with_bakta_threads(mut self, threads: usize) -> Self {
+        self.bakta_threads = threads;
+        self
+    }
+
+    /// Disable auto-download of Bakta database.
+    pub fn with_no_bakta_db_download(mut self, no_download: bool) -> Self {
+        self.no_bakta_db_download = no_download;
+        self
+    }
+
+    /// Keep Bakta output files after pipeline completes.
+    pub fn with_keep_bakta_output(mut self, keep: bool) -> Self {
+        self.keep_bakta_output = keep;
         self
     }
 
