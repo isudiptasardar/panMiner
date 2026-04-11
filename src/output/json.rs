@@ -104,43 +104,60 @@ impl JsonWriter {
 
     /// Write the pan-genome reference FASTA (Panaroo-style).
     ///
-    /// Linear reference genome of all genes found. Paralogous clusters
-    /// represented only once to avoid multi-mapping issues.
+    /// Writes the centroid DNA sequence per cluster.
+    /// Clusters without centroid sequences are skipped.
     pub fn write_reference(graph: &PangenomeGraph, path: &Path) -> Result<()> {
         let mut file = std::fs::File::create(path)?;
 
-        // Note: This is a placeholder that writes metadata.
-        // In a full implementation, this would write actual sequences from the clusters.
         for (cluster_id, node) in &graph.nodes {
-            let annotation = node.annotations.iter().next().cloned().unwrap_or_else(|| "hypothetical protein".to_string());
-            writeln!(file, ">{} {}", cluster_id, annotation)?;
-            writeln!(file, "N{}", "A".repeat(100))?; // Placeholder sequence
+            let annotation = node.annotations.iter().next().cloned()
+                .unwrap_or_else(|| "hypothetical protein".to_string());
+
+            if let Some(seq) = &node.centroid_sequence {
+                writeln!(file, ">{} {}", cluster_id, annotation)?;
+                writeln!(file, "{}", String::from_utf8_lossy(seq))?;
+            }
         }
 
         Ok(())
     }
 
     /// Write combined DNA CDS FASTA (Panaroo-style).
+    ///
+    /// Writes the centroid DNA sequence for each cluster.
     pub fn write_dna_fasta(graph: &PangenomeGraph, path: &Path) -> Result<()> {
         let mut file = std::fs::File::create(path)?;
 
         for (cluster_id, node) in &graph.nodes {
-            let annotation = node.annotations.iter().next().cloned().unwrap_or_else(|| "hypothetical protein".to_string());
-            writeln!(file, ">{} {}", cluster_id, annotation)?;
-            writeln!(file, "N{}", "A".repeat(100))?; // Placeholder sequence
+            let annotation = node.annotations.iter().next().cloned()
+                .unwrap_or_else(|| "hypothetical protein".to_string());
+
+            if let Some(seq) = &node.centroid_sequence {
+                writeln!(file, ">{} {}", cluster_id, annotation)?;
+                writeln!(file, "{}", String::from_utf8_lossy(seq))?;
+            }
         }
 
         Ok(())
     }
 
     /// Write combined protein CDS FASTA (Panaroo-style).
+    ///
+    /// Translates the centroid DNA sequence to protein for each cluster.
     pub fn write_protein_fasta(graph: &PangenomeGraph, path: &Path) -> Result<()> {
         let mut file = std::fs::File::create(path)?;
 
         for (cluster_id, node) in &graph.nodes {
-            let annotation = node.annotations.iter().next().cloned().unwrap_or_else(|| "hypothetical protein".to_string());
-            writeln!(file, ">{} {}", cluster_id, annotation)?;
-            writeln!(file, "M{}", "A".repeat(100))?; // Placeholder sequence starting with Methionine
+            let annotation = node.annotations.iter().next().cloned()
+                .unwrap_or_else(|| "hypothetical protein".to_string());
+
+            if let Some(seq) = &node.centroid_sequence {
+                let protein = crate::io::translate(seq);
+                if !protein.is_empty() {
+                    writeln!(file, ">{} {}", cluster_id, annotation)?;
+                    writeln!(file, "{}", String::from_utf8_lossy(&protein))?;
+                }
+            }
         }
 
         Ok(())

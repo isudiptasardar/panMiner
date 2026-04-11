@@ -10,6 +10,7 @@ mod compress;
 mod streaming;
 mod qc_traits;
 mod bakta;
+mod translate;
 
 pub use mmap::MmapFile;
 pub use gff::GffParser;
@@ -18,3 +19,4 @@ pub use compress::{CompressedWriter, CompressedReader};
 pub use streaming::{StreamingPipeline, PartialGraph};
 pub use qc_traits::{GenomeQC, QcMode, QcRunner, CheckmQcRunner};
 pub use bakta::{BaktaRunner, BaktaDbType, is_gff_file, is_genbank_file, genbank_to_fasta};
+pub use translate::{translate, translate_with_stop};
