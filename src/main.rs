@@ -5,6 +5,7 @@ use clap::Parser;
 use tracing_subscriber::EnvFilter;
 
 use panminer::config::{CorrectionMode, OutputFormat, PanminerConfig, QcMode};
+use panminer::io::BaktaDbType;
 use panminer::pipeline::PanminerPipeline;
 
 /// PanMiner - A modern pangenome analysis tool with GPU and CPU support.
@@ -63,6 +64,30 @@ struct Cli {
     #[arg(long)]
     checkm_database: Option<PathBuf>,
 
+    /// Re-annotate input genomes with Bakta before analysis
+    #[arg(short = 'r', long)]
+    reannotate: bool,
+
+    /// Path to Bakta database directory
+    #[arg(long)]
+    bakta_db: Option<PathBuf>,
+
+    /// Bakta database type for auto-download (full or light)
+    #[arg(long, default_value = "full")]
+    bakta_db_type: String,
+
+    /// Number of threads for Bakta (default: same as pipeline)
+    #[arg(long)]
+    bakta_threads: Option<usize>,
+
+    /// Fail if Bakta database not found instead of auto-downloading
+    #[arg(long)]
+    no_bakta_db_download: bool,
+
+    /// Keep Bakta output files after pipeline completes
+    #[arg(long)]
+    keep_bakta_output: bool,
+
     /// Verbose output
     #[arg(short, long)]
     verbose: bool,
@@ -104,6 +129,13 @@ fn parse_formats(s: &str) -> std::collections::HashSet<OutputFormat> {
         .collect()
 }
 
+fn parse_bakta_db_type(s: &str) -> BaktaDbType {
+    match s.to_lowercase().as_str() {
+        "light" => BaktaDbType::Light,
+        _ => BaktaDbType::Full,
+    }
+}
+
 fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
 
@@ -122,7 +154,7 @@ fn main() -> anyhow::Result<()> {
     tracing::info!("PanMiner v{}", panminer::VERSION);
 
     // Build configuration
-    let config = PanminerConfig::new()
+    let mut config = PanminerConfig::new()
         .with_input_files(cli.input)
         .with_output_dir(cli.output)
         .with_threads(cli.threads)
@@ -133,7 +165,18 @@ fn main() -> anyhow::Result<()> {
         .with_enable_mmseqs(!cli.no_mmseqs2)
         .with_prefer_gpu(!cli.no_gpu)
         .with_enable_qc(!cli.no_qc)
-        .with_qc_mode(parse_qc_mode(&cli.qc_mode));
+        .with_qc_mode(parse_qc_mode(&cli.qc_mode))
+        .with_reannotate(cli.reannotate)
+        .with_keep_bakta_output(cli.keep_bakta_output)
+        .with_no_bakta_db_download(cli.no_bakta_db_download);
+
+    if let Some(bakta_db) = cli.bakta_db {
+        config = config.with_bakta_db_path(bakta_db);
+    }
+    if let Some(bakta_threads) = cli.bakta_threads {
+        config = config.with_bakta_threads(bakta_threads);
+    }
+    config = config.with_bakta_db_type(parse_bakta_db_type(&cli.bakta_db_type));
 
     // Validate
     config.validate()?;
