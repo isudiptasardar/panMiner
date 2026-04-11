@@ -32,10 +32,10 @@
 | Mash distance estimation | Yes (bundled wrapper) | **No** | Panaroo generates MDS projections, contamination bar charts, contig/gene count plots |
 | CheckM integration | Yes (optional) | **No** | Assembly completeness and contamination scoring |
 | Pre-QC diagnostic plots | Yes (Mash-based) | **No** | PanMiner has no pre-processing visualization |
-| Annotation standardization | Prokka (bundled wrapper) | **No** | Panaroo re-annotates all inputs with Prokka to ensure consistency |
-| Input format | GFF3 (Prokka-annotated recommended) | GFF3 only | Both accept GFF3; Panaroo also accepts pre-annotated or raw assemblies |
+| Annotation standardization | Prokka (bundled wrapper) | **Bakta** (optional) | PanMiner uses Bakta for re-annotation; Panaroo uses Prokka |
+| Input format | GFF3 (Prokka-annotated recommended) | GFF3, FASTA, GenBank | PanMiner accepts raw assemblies via Bakta re-annotation |
 
-**Gap**: PanMiner lacks any pre-processing QC. Users must ensure input quality themselves. No Mash, CheckM, or Prokka wrappers exist.
+**Gap**: PanMiner has Bakta re-annotation support but lacks Mash distance estimation and CheckM integration for full pre-processing QC.
 
 ---
 
@@ -148,27 +148,36 @@
 Based on this comparison, here are the most impactful gaps to close, ordered by priority:
 
 ### P0 — Critical (Functional Correctness)
-1. **Wire missing gene recovery into pipeline** — **Complete** — MissingGeneRecoverer is now wired into the pipeline (requires contig sequences)
-2. **Pass real sequences to fragment merger** — **Complete** — FragmentMerger now receives real centroid sequences from graph nodes
+1. **Wire missing gene recovery into pipeline** — **Complete** — MissingGeneRecoverer now wired with sliding-window semi-global alignment
+2. **Pass real sequences to fragment merger** — **Complete** — FragmentMerger uses Levenshtein alignment with BFS depth 3
 3. **Implement real alignment output** — **Complete** — MSA-based alignments via MAFFT/Clustal/PRANK subprocesses
+4. **Store full contig DNA from GFF FASTA** — **Complete** — GFF parser extracts FASTA section, passed through to graph nodes
+5. **Paralog resolution with synteny** — **Complete** — Context vector similarity (BFS depth 5) + centroid length check
 
 ### P1 — High (Core Feature Parity)
-4. **Contig-end pruning** — **Complete** - Recursive degree-1 node removal at contig ends
-5. **Structural variant matrix** — **Complete** - Gene triplet presence/absence output
-6. **Integration tests** — **Complete** - Expanded with contig-end, SV matrix, paralog, and large dataset tests
+6. **Contig-end pruning** — **Complete** - Recursive degree-1 node removal at contig ends
+7. **Structural variant matrix** — **Complete** - Gene triplet presence/absence output
+8. **Integration tests** — **Complete** - Expanded with contig-end, SV matrix, paralog, and large dataset tests
+9. **BFS depth [1,2,3] in mistranslation correction** — **Complete** - FragmentMerger uses configurable BFS depth
+10. **Distance matrix reuse** — **Complete** - DistanceCache for reuse across correction passes
+11. **Misassembly edge cleaning** — **Complete** - Two-criteria removal (contig-end + disproportionate edges)
+12. **Pre-filtered graph output** — **Complete** - pre_filt_graph.gml written before correction
+13. **Summary statistics** — **Complete** - Core/Soft core/Shell/Cloud classification
 
 ### P2 — Medium (Downstream Integration)
-8. **GWAS integration** — At minimum, pyseer wrapper
-9. **Alignment tool integration** — MAFFT/Prank/Clustal for real MSAs
-10. **Parquet output** — Useful for data science workflows
-11. **HTML visualization** — Interactive graph exploration
+14. **Bakta re-annotation** — **Complete** — Phase 0.5 Bakta subprocess runner with GFF/FASTA/GenBank support
+15. **GWAS integration** — At minimum, pyseer wrapper
+16. **Alignment tool integration** — MAFFT/Prank/Clustal for real MSAs (**Complete** for MSA)
+17. **Parquet output** — Useful for data science workflows
+18. **HTML visualization** — Interactive graph exploration
 
 ### P3 — Nice-to-Have
-12. **SIMD sequence comparison** — Replace scalar loop with actual SIMD intrinsics
-13. **GPU compute shaders** — Direct CUDA/wgpu for clustering (beyond MMseqs2)
-14. **Python bindings** — PyO3 integration for broader adoption
-15. **Evolutionary models** — IMG/FMG implementations
-16. **Container packaging** — Docker/Singularity for reproducibility
+19. **Mash distance estimation** — Panaroo generates MDS projections using Mash
+20. **SIMD sequence comparison** — Replace scalar loop with actual SIMD intrinsics
+21. **GPU compute shaders** — Direct CUDA/wgpu for clustering (beyond MMseqs2)
+21. **Python bindings** — PyO3 integration for broader adoption
+22. **Evolutionary models** — IMG/FMG implementations
+23. **Container packaging** — Docker/Singularity for reproducibility
 
 ---
 
