@@ -1,6 +1,6 @@
 # PanMiner
 
-A modern pangenome analysis tool written in Rust. PanMiner processes GFF3-annotated genome assemblies to build pangenome graphs, with support for GPU-accelerated clustering via MMseqs2, pre-processing QC via CheckM2, and CPU fallback.
+A modern pangenome analysis tool written in Rust. PanMiner processes genome assemblies (GFF3, FASTA, or GenBank) to build pangenome graphs, with support for GPU-accelerated clustering via MMseqs2, pre-processing QC via CheckM2, re-annotation via Bakta, and CPU fallback.
 
 [![crates.io](https://img.shields.io/crates/v/panminer)](https://crates.io/crates/panminer)
 [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
@@ -8,15 +8,17 @@ A modern pangenome analysis tool written in Rust. PanMiner processes GFF3-annota
 
 ## Features
 
+- **Bakta re-annotation** - Annotate raw genome assemblies (FASTA/GenBank) before analysis
 - **Pre-processing QC** - CheckM2 integration for completeness/contamination scoring
 - **Memory-mapped I/O** - Zero-copy file access for large datasets
 - **Parallel processing** - Rayon-based work-stealing parallelism
-- **GPU-accelerated clustering** - MMseqs2 with CUDA support
+- **GPU-accelerated clustering** - MMseqs2 with CUDA support, built-in CPU fallback
 - **Concurrent graph** - Lock-free DashMap-based graph construction
-- **Multiple output formats** - CSV, FASTA, GML, JSON, JSONL, Parquet, HTML
-- **Contig-end pruning** - Recursive degree-1 node removal at contig ends
+- **Error correction** - Paralog resolution, contig-end pruning, fragment merging, missing gene recovery, misassembly edge cleaning
 - **Structural variant matrix** - Gene triplet presence/absence output
-- **Expanded integration tests** - End-to-end pipeline testing with real data scenarios
+- **Multiple output formats** - CSV, FASTA, GML, JSON, JSONL, Parquet, HTML
+- **Multiple alignment tools** - MAFFT, Clustal Omega, PRANK subprocess integration
+- **Mixed input** - Accept GFF3, FASTA (.fna/.fa), and GenBank (.gb/.gbk/.gbff) files
 
 ## Installation
 
@@ -24,6 +26,8 @@ A modern pangenome analysis tool written in Rust. PanMiner processes GFF3-annota
 
 - **Rust 1.70+** - [Install via rustup](https://rustup.rs)
 - **MMseqs2** (optional) - For GPU-accelerated clustering
+- **Bakta** (optional) - For re-annotation of raw genome assemblies
+- **CheckM2** (optional) - For pre-processing quality control
 
 ### Method 1: Install from Cargo (Recommended)
 
@@ -39,8 +43,8 @@ cargo install --path .
 
 ```bash
 # Clone the repository
-git clone https://github.com/panminer/panminer.git
-cd panminer
+git clone https://github.com/isudiptasardar/panMiner.git
+cd panMiner
 
 # Build in release mode
 cargo build --release
@@ -84,7 +88,7 @@ The installation script will:
 
 ### External Tool Installation (Optional)
 
-### CheckM2 (Pre-processing QC)
+#### CheckM2 (Pre-processing QC)
 ```bash
 # Via conda
 conda install -c bioconda checkm2
@@ -92,7 +96,7 @@ conda install -c bioconda checkm2
 # Or download from https://github.com/chklovski/CheckM2
 ```
 
-### MMseqs2 (GPU-accelerated clustering)
+#### MMseqs2 (GPU-accelerated clustering)
 ```bash
 # Via conda
 conda install -c bioconda mmseqs2
@@ -100,16 +104,31 @@ conda install -c bioconda mmseqs2
 # Or download from https://github.com/soedinglab/MMseqs2
 ```
 
-**Note**: PanMiner automatically detects CheckM2 and MMseqs2. If CheckM2 is not installed, QC is skipped. If MMseqs2 is not installed, it falls back to CPU-based greedy clustering. Use `--no-qc`, `--no-gpu`, or `--no-mmseqs2` to disable specific features.
+#### Bakta (Genome re-annotation)
+```bash
+# Via conda (recommended)
+conda install -c conda-forge -c bioconda bakta
+
+# Or via pip
+pip install bakta
+
+# Download the Bakta database (full or light)
+bakta_db download --output ~/.bakta --type full
+```
+
+**Note**: PanMiner automatically detects CheckM2, MMseqs2, and Bakta. If a tool is not installed, its feature is gracefully skipped. Use `--no-qc`, `--no-mmseqs2`, or simply don't pass `--reannotate` to disable specific features.
 
 ## Quick Start
 
 ```bash
-# Basic usage with default settings
+# Basic usage with GFF3 files
 panminer genome1.gff genome2.gff -o output_dir
 
 # With custom identity threshold and threads
 panminer *.gff -o panminer_output --identity 0.95 --threads 8
+
+# Re-annotate raw assemblies with Bakta before analysis
+panminer -r genome1.fasta genome2.fasta genome3.gff -o output_dir
 
 # Force CPU mode (disable GPU)
 panminer *.gff -o output --force-cpu
@@ -119,12 +138,18 @@ panminer *.gff -o output --force-cpu
 
 | Flag | Description | Default |
 |------|-------------|---------|
-| `INPUT` | Input GFF3 files (required) | - |
+| `INPUT` | Input GFF3/FASTA/GenBank files (required) | - |
 | `-o, --output` | Output directory | `panminer_output` |
 | `-t, --threads` | Thread count (0 = auto) | `0` |
 | `--chunk-size` | Genomes per chunk for streaming | `100` |
 | `--identity` | Clustering identity threshold (0.5-1.0) | `0.98` |
 | `--mode` | Correction mode: strict, default, sensitive | `default` |
+| `-r, --reannotate` | Re-annotate inputs with Bakta before analysis | `false` |
+| `--bakta-db` | Path to Bakta database directory | Auto-detect |
+| `--bakta-db-type` | Bakta DB type for auto-download: full or light | `full` |
+| `--bakta-threads` | Threads for Bakta (default: same as pipeline) | Auto |
+| `--no-bakta-db-download` | Fail if Bakta DB not found (no auto-download) | `false` |
+| `--keep-bakta-output` | Keep Bakta output files after pipeline | `false` |
 | `--force-cpu` | Disable GPU/MMseqs2 | `false` |
 | `--no-mmseqs2` | Disable MMseqs2 clustering | `false` |
 | `--no-gpu` | Disable GPU detection and acceleration | `false` |
@@ -134,6 +159,18 @@ panminer *.gff -o output --force-cpu
 | `--mmseqs-path` | Path to MMseqs2 binary | Auto-detect |
 | `-v, --verbose` | Enable debug logging | `false` |
 | `--formats` | Output formats (comma-separated) | `matrix,alignment,graph` |
+
+### Re-annotation with Bakta
+
+When `--reannotate` (or `-r`) is passed, PanMiner annotates raw genome assemblies with Bakta before pangenome analysis:
+
+- **GFF/GFF3 files** — passed through unchanged (already annotated)
+- **FASTA files** (.fasta, .fna, .fa) — annotated by Bakta
+- **GenBank files** (.gb, .gbk, .gbff) — converted to FASTA, then annotated by Bakta
+
+If Bakta is not installed, GFF files are used directly and a warning is logged. GenBank files without Bakta produce an error.
+
+Bakta database resolution priority: `--bakta-db` flag > `BAKTA_DB` env var > `~/.bakta/db` > auto-download (unless `--no-bakta-db-download`).
 
 ### Correction Modes
 
@@ -145,19 +182,22 @@ panminer *.gff -o output --force-cpu
 
 ## Output Files
 
-PanMiner follows **Panaroo/Roary output naming conventions** for compatibility. The following files are generated:
+PanMiner follows **Panaroo/Roary output naming conventions** for compatibility:
 
 | File | Description | Roary Compatible |
 |------|-------------|------------------|
-| `gene_presence_absence.csv` | Gene presence/absence matrix | ✅ Yes |
-| `gene_presence_absence.Rtab` | Binary tab-separated presence/absence | ✅ Yes |
-| `final_graph.gml` | Pan-genome graph (Cytoscape-compatible) | ❌ No |
-| `struct_presence_absence.csv` | Genomic rearrangement events | ❌ No |
-| `pan_genome_reference.fa` | Reference genome of all genes | ✅ Yes (similar) |
-| `gene_data.csv` | Links gene sequences to annotations | ❌ No |
-| `combined_DNA_CDS.fasta` | All nucleotide sequences | ❌ No |
-| `combined_protein_CDS.fasta` | All protein sequences | ❌ No |
-| `core_gene_alignment.aln` | Core gene alignment | ❌ No (uses .aln) |
+| `gene_presence_absence.csv` | Gene presence/absence matrix | Yes |
+| `gene_presence_absence.Rtab` | Binary tab-separated presence/absence | Yes |
+| `final_graph.gml` | Pan-genome graph (Cytoscape-compatible) | No |
+| `pre_filt_graph.gml` | Graph before correction | No |
+| `struct_presence_absence.csv` | Genomic rearrangement events | No |
+| `struct_presence_absence.Rtab` | Binary structural variant matrix | No |
+| `pan_genome_reference.fa` | Reference genome of all genes | Yes (similar) |
+| `gene_data.csv` | Gene-to-annotation links | No |
+| `combined_DNA_CDS.fasta` | All nucleotide sequences | No |
+| `combined_protein_CDS.fasta` | All protein sequences | No |
+| `core_gene_alignment.aln` | Core gene alignment | No (uses .aln) |
+| `summary_statistics.txt` | Core/Soft core/Shell/Cloud counts | No |
 
 ### QC Output Files (when enabled)
 
@@ -175,37 +215,54 @@ PanMiner follows **Panaroo/Roary output naming conventions** for compatibility. 
 | `_pangenome.parquet` | Parquet format (if `--features parquet`) |
 | `_pangenome.html` | Interactive HTML visualization (if `--features viz`) |
 
----
+## Pipeline Flow
 
-## Panaroo/Roary Compatibility
-
-PanMiner uses the same output file naming convention as **Panaroo** and **Roary**:
-- `gene_presence_absence.csv` - Same name as Roary (drop-in replacement)
-- `gene_presence_absence.Rtab` - Roary-compatible binary format
-- `final_graph.gml` - Cytoscape-compatible graph format
-- `core_gene_alignment.aln` - Alignment file (uses `.aln` extension like Panaroo)
+```
+Phase 0:   QC (optional) — CheckM2 completeness/contamination scoring
+Phase 0.5: Re-annotation (optional) — Bakta annotation of raw assemblies
+Phase 1:   Parse — Memory-mapped GFF3/FASTA parsing with Rayon parallelism
+Phase 2:   Cluster — MMseqs2-GPU or CPU fallback greedy clustering
+Phase 3:   Build graph — DashMap concurrent graph construction
+Phase 4:   Correct — Paralog resolution, contamination removal, fragment merging,
+                     missing gene recovery, misassembly edge cleaning
+Phase 5:   Matrix — Build presence/absence matrix (BitPackedMatrix)
+Phase 6:   Output — Generate all output files
+```
 
 ## Usage Examples
 
-### Process multiple genomes with custom settings
+### Basic pangenome analysis
 
 ```bash
-panminer \
-  genome1.gff genome2.gff genome3.gff \
-  -o panminer_results \
-  --identity 0.95 \
-  --mode strict \
-  --threads 16
+panminer genome1.gff genome2.gff genome3.gff -o results
 ```
 
-### Use GPU acceleration (requires MMseqs2 with CUDA)
+### Re-annotate raw assemblies with Bakta
+
+```bash
+panminer -r *.fasta -o results --threads 16
+```
+
+### Mixed input (GFF + FASTA + GenBank)
+
+```bash
+panminer -r annotated.gff raw.fasta draft.gbk -o results
+```
+
+### Strict mode for phylogenetic studies
+
+```bash
+panminer *.gff -o results --mode strict --identity 0.95
+```
+
+### GPU acceleration with MMseqs2
 
 ```bash
 panminer *.gff -o gpu_output --mode sensitive
 # MMseqs2 GPU is auto-detected and used if available
 ```
 
-### Stream large datasets (exceeds memory)
+### Stream large datasets
 
 ```bash
 panminer *.gff -o streaming_output --chunk-size 50
@@ -214,24 +271,29 @@ panminer *.gff -o streaming_output --chunk-size 50
 ### Generate specific output formats
 
 ```bash
-panminer *.gff -o output --formats matrix,json
+panminer *.gff -o output --formats matrix,json,graph
 ```
 
 ## Library Usage
 
 ```rust
-use panminer::{PanminerConfig, PanminerPipeline};
+use panminer::{PanminerConfig, PanminerPipeline, BaktaDbType};
+use std::path::PathBuf;
 
 fn main() -> panminer::Result<()> {
     let config = PanminerConfig::new()
-        .with_input_files(vec!["genome1.gff".into(), "genome2.gff".into()])
-        .with_output_dir("output".into())
+        .with_input_files(vec![
+            PathBuf::from("genome1.gff"),
+            PathBuf::from("genome2.gff"),
+        ])
+        .with_output_dir(PathBuf::from("output"))
         .with_threads(8)
-        .with_identity(0.98);
-    
+        .with_reannotate(true)
+        .with_bakta_db_type(BaktaDbType::Full);
+
     let pipeline = PanminerPipeline::new(config);
     let result = pipeline.run()?;
-    
+
     println!("Output: {:?}", result.output_dir);
     Ok(())
 }
@@ -295,35 +357,62 @@ cargo doc --open
 
 ```
 src/
-├── io/           # I/O & Memory (mmap, gff, fasta, compress, streaming)
-├── clustering/   # Compute - Clustering (mmseqs, cpu, traits)
-├── graph/        # Data Structures (types, concurrent, matrix, builder)
-├── correction/   # Error Correction (contamination, fragment, missing)
-├── output/       # Output Generation (matrix, alignment, graph, json)
-└── pipeline.rs   # Main pipeline orchestration
+├── lib.rs              # Library entry point, re-exports
+├── main.rs             # CLI with clap
+├── config.rs           # Configuration structs (CorrectionMode, OutputFormat, BaktaDbType)
+├── error.rs            # Error types (thiserror-based)
+├── pipeline.rs         # Main pipeline orchestration (PanminerPipeline)
+│
+├── io/                 # I/O & Memory
+│   ├── mmap.rs         # Memory-mapped file wrapper
+│   ├── gff.rs          # GFF3 parser (mmap-based)
+│   ├── fasta.rs        # FASTA parser
+│   ├── compress.rs     # Zstd compression utilities
+│   ├── streaming.rs    # Chunked processing for large datasets
+│   ├── bakta.rs        # Bakta annotation runner (subprocess)
+│   └── qc_traits.rs    # QC runner traits (CheckM2)
+│
+├── clustering/         # Compute
+│   ├── traits.rs       # Clusterer trait
+│   ├── mmseqs.rs       # MMseqs2-GPU integration
+│   ├── cpu.rs          # CPU fallback with SIMD
+│   └── alignment_*.rs  # MSA tools (MAFFT, Clustal, PRANK)
+│
+├── graph/              # Data Structures
+│   ├── types.rs        # Gene, GeneCluster, Node, Edge, PangenomeGraph
+│   ├── concurrent.rs   # DashMap-based graph (ConcurrentGraph)
+│   ├── matrix.rs       # BitPackedMatrix (8x memory reduction)
+│   ├── builder.rs      # Graph construction
+│   └── structural_variants.rs  # Gene triplet detection
+│
+├── correction/         # Error Correction
+│   ├── contamination.rs    # Low-support node removal
+│   ├── contig_end.rs      # Contig-end pruning
+│   ├── fragment.rs        # Fragment merging with alignment
+│   ├── missing.rs         # Missing gene recovery
+│   ├── paralog.rs         # Paralog resolution with synteny
+│   ├── misassembly.rs     # Misassembly edge cleaning
+│   └── simd.rs            # SIMD sequence comparison
+│
+└── output/             # Output Generation
+    ├── matrix.rs       # CSV/TSV presence-absence
+    ├── alignment.rs    # FASTA alignments (MAFFT/Clustal/PRANK)
+    ├── graph.rs        # GML output
+    ├── json.rs         # JSON/JSONL output
+    ├── summary.rs      # Summary statistics
+    ├── sv_matrix.rs    # Structural variant matrix
+    ├── qc_stats.rs     # QC statistics output
+    ├── parquet.rs      # Parquet output
+    └── html_viz.rs     # HTML visualization
 ```
 
-See [Architecture.md](Architecture.md) for detailed module descriptions.
+## Known Limitations
 
-## Configuration Reference
-
-See [Specs.md](Specs.md) for:
-- Complete feature matrix
-- Configuration options
-- Correction mode details
-- Output format specifications
-
-## Feature Comparison
-
-See [Comparison.md](Comparison.md) for detailed comparison with Panaroo and the PanMiner roadmap.
-
-## Known Gaps
-
-See [Comparison.md](Comparison.md#priority-roadmap) for current limitations:
-- Pre-processing QC with Mash (CheckM2 is complete)
-- Real multiple sequence alignment output
-- Downstream analysis (GWAS, evolutionary models)
-- Complete integration tests
+- Mash distance estimation (MDS projections) not yet implemented
+- GWAS integration (pyseer) not yet implemented
+- Python bindings (PyO3) are a stub
+- HTML visualization is a stub
+- Parquet output is a stub
 
 ## Contributing
 
@@ -342,3 +431,4 @@ MIT License - see [LICENSE](LICENSE) for details.
 - PanMiner is inspired by [Panaroo](https://github.com/gtonkinhill/panaroo)
 - Built with Rust, Rayon, DashMap, and memmap2
 - Uses MMseqs2 for GPU-accelerated clustering
+- Uses Bakta for genome re-annotation
