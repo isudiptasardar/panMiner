@@ -20,6 +20,7 @@ mod sv_matrix;
 mod summary;
 mod parquet;
 mod html_viz;
+mod filter_pa;
 pub mod qc_stats;
 
 pub use matrix::MatrixWriter;
@@ -29,6 +30,7 @@ pub use json::JsonWriter;
 pub use struct_csv::write_structural_variants;
 pub use sv_matrix::SVMatrixWriter;
 pub use summary::write_summary_stats;
+pub use filter_pa::{FilterType, filter_presence_absence, parse_filter_types};
 pub use qc_stats::{write_qc_stats, write_qc_summary};
 
 #[cfg(feature = "parquet")]

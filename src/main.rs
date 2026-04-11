@@ -1,18 +1,22 @@
 //! PanMiner CLI entry point.
 
 use std::path::PathBuf;
-use clap::Parser;
+use clap::{Parser, Subcommand};
 use tracing_subscriber::EnvFilter;
 
 use panminer::config::{CorrectionMode, OutputFormat, PanminerConfig, QcMode};
 use panminer::io::BaktaDbType;
+use panminer::output::{filter_presence_absence, parse_filter_types};
 use panminer::pipeline::PanminerPipeline;
 
 /// PanMiner - A modern pangenome analysis tool with GPU and CPU support.
 #[derive(Parser, Debug)]
 #[command(name = "panminer", version, about)]
 struct Cli {
-    /// Input GFF3 files
+    #[command(subcommand)]
+    command: Option<Commands>,
+
+    /// Input GFF3 files (for default run command)
     #[arg(required = true)]
     input: Vec<PathBuf>,
 
@@ -97,6 +101,30 @@ struct Cli {
     formats: String,
 }
 
+/// Subcommands for PanMiner.
+#[derive(Subcommand, Debug)]
+enum Commands {
+    /// Filter a presence/absence matrix
+    #[command(name = "filter-pa")]
+    FilterPa {
+        /// Input gene_presence_absence.csv file
+        #[arg(long)]
+        input: PathBuf,
+
+        /// Output filtered file
+        #[arg(long)]
+        output: PathBuf,
+
+        /// Filter types (comma-separated: frag,pseudo,length)
+        #[arg(long, default_value = "frag,pseudo")]
+        filter_type: String,
+
+        /// Length outlier threshold (proportion deviation from mode)
+        #[arg(long, default_value = "0.5")]
+        length_threshold: f32,
+    },
+}
+
 fn parse_mode(s: &str) -> CorrectionMode {
     match s.to_lowercase().as_str() {
         "strict" => CorrectionMode::Strict,
@@ -151,48 +179,59 @@ fn main() -> anyhow::Result<()> {
         .with_target(false)
         .init();
 
-    tracing::info!("PanMiner v{}", panminer::VERSION);
+    match cli.command {
+        Some(Commands::FilterPa { input, output, filter_type, length_threshold }) => {
+            tracing::info!("PanMiner filter-pa v{}", panminer::VERSION);
+            let types = parse_filter_types(&filter_type);
+            filter_presence_absence(&input, &output, &types, length_threshold)?;
+            tracing::info!("Filtered output written to: {:?}", output);
+            tracing::info!("Done.");
+        }
+        None => {
+            // Default: run the main pipeline
+            tracing::info!("PanMiner v{}", panminer::VERSION);
 
-    // Build configuration
-    let mut config = PanminerConfig::new()
-        .with_input_files(cli.input)
-        .with_output_dir(cli.output)
-        .with_threads(cli.threads)
-        .with_chunk_size(cli.chunk_size)
-        .with_mode(parse_mode(&cli.mode))
-        .with_outputs(parse_formats(&cli.formats))
-        .force_cpu(cli.force_cpu)
-        .with_enable_mmseqs(!cli.no_mmseqs2)
-        .with_prefer_gpu(!cli.no_gpu)
-        .with_enable_qc(!cli.no_qc)
-        .with_qc_mode(parse_qc_mode(&cli.qc_mode))
-        .with_reannotate(cli.reannotate)
-        .with_keep_bakta_output(cli.keep_bakta_output)
-        .with_no_bakta_db_download(cli.no_bakta_db_download);
+            let mut config = PanminerConfig::new()
+                .with_input_files(cli.input)
+                .with_output_dir(cli.output)
+                .with_threads(cli.threads)
+                .with_chunk_size(cli.chunk_size)
+                .with_mode(parse_mode(&cli.mode))
+                .with_outputs(parse_formats(&cli.formats))
+                .force_cpu(cli.force_cpu)
+                .with_enable_mmseqs(!cli.no_mmseqs2)
+                .with_prefer_gpu(!cli.no_gpu)
+                .with_enable_qc(!cli.no_qc)
+                .with_qc_mode(parse_qc_mode(&cli.qc_mode))
+                .with_reannotate(cli.reannotate)
+                .with_keep_bakta_output(cli.keep_bakta_output)
+                .with_no_bakta_db_download(cli.no_bakta_db_download);
 
-    if let Some(bakta_db) = cli.bakta_db {
-        config = config.with_bakta_db_path(bakta_db);
+            if let Some(bakta_db) = cli.bakta_db {
+                config = config.with_bakta_db_path(bakta_db);
+            }
+            if let Some(bakta_threads) = cli.bakta_threads {
+                config = config.with_bakta_threads(bakta_threads);
+            }
+            config = config.with_bakta_db_type(parse_bakta_db_type(&cli.bakta_db_type));
+
+            // Validate
+            config.validate()?;
+
+            tracing::info!(
+                "Processing {} genomes with {} threads",
+                config.input_files.len(),
+                config.effective_threads()
+            );
+
+            // Run pipeline
+            let pipeline = PanminerPipeline::new(config);
+            let result = pipeline.run()?;
+
+            tracing::info!("Output written to: {:?}", result.output_dir);
+            tracing::info!("Done.");
+        }
     }
-    if let Some(bakta_threads) = cli.bakta_threads {
-        config = config.with_bakta_threads(bakta_threads);
-    }
-    config = config.with_bakta_db_type(parse_bakta_db_type(&cli.bakta_db_type));
-
-    // Validate
-    config.validate()?;
-
-    tracing::info!(
-        "Processing {} genomes with {} threads",
-        config.input_files.len(),
-        config.effective_threads()
-    );
-
-    // Run pipeline
-    let pipeline = PanminerPipeline::new(config);
-    let result = pipeline.run()?;
-
-    tracing::info!("Output written to: {:?}", result.output_dir);
-    tracing::info!("Done.");
 
     Ok(())
 }
