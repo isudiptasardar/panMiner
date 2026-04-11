@@ -150,6 +150,12 @@ pub struct PanminerConfig {
     pub alignment_tool: AlignmentTool,
     /// Output file prefix
     pub output_prefix: String,
+    /// Trim alignment with ClipKIT after MSA
+    pub trim_alignment: bool,
+    /// Trim mode for ClipKIT (smart-gap, gappyout, strict)
+    pub trim_mode: String,
+    /// Generate codon alignments via MACSE
+    pub codons: bool,
 
     // GPU
     /// Force CPU even if GPU available
@@ -191,6 +197,9 @@ impl Default for PanminerConfig {
             outputs: [OutputFormat::Matrix, OutputFormat::Alignment].into_iter().collect(),
             alignment_tool: AlignmentTool::default(),
             output_prefix: String::from("panminer"),
+            trim_alignment: false,
+            trim_mode: String::from("smart-gap"),
+            codons: false,
             force_cpu: false,
             gpu_backend: GpuBackend::Auto,
             verbose: false,
@@ -333,6 +342,24 @@ impl PanminerConfig {
     /// Keep Bakta output files after pipeline completes.
     pub fn with_keep_bakta_output(mut self, keep: bool) -> Self {
         self.keep_bakta_output = keep;
+        self
+    }
+
+    /// Enable alignment trimming with ClipKIT.
+    pub fn with_trim_alignment(mut self, trim: bool) -> Self {
+        self.trim_alignment = trim;
+        self
+    }
+
+    /// Set ClipKIT trim mode.
+    pub fn with_trim_mode(mut self, mode: String) -> Self {
+        self.trim_mode = mode;
+        self
+    }
+
+    /// Enable codon alignment via MACSE.
+    pub fn with_codons(mut self, codons: bool) -> Self {
+        self.codons = codons;
         self
     }
 

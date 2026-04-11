@@ -100,6 +100,18 @@ struct Cli {
     /// Output formats (comma-separated: matrix,alignment,graph,json)
     #[arg(long, default_value = "matrix,alignment,graph")]
     formats: String,
+
+    /// Trim alignment with ClipKIT after MSA
+    #[arg(long)]
+    trim_alignment: bool,
+
+    /// ClipKIT trim mode: smart-gap, gappyout, strict
+    #[arg(long, default_value = "smart-gap")]
+    trim_mode: String,
+
+    /// Generate codon alignments via MACSE
+    #[arg(long)]
+    codons: bool,
 }
 
 /// Subcommands for PanMiner.
@@ -286,7 +298,10 @@ fn main() -> anyhow::Result<()> {
                 .with_qc_mode(parse_qc_mode(&cli.qc_mode))
                 .with_reannotate(cli.reannotate)
                 .with_keep_bakta_output(cli.keep_bakta_output)
-                .with_no_bakta_db_download(cli.no_bakta_db_download);
+                .with_no_bakta_db_download(cli.no_bakta_db_download)
+                .with_trim_alignment(cli.trim_alignment)
+                .with_trim_mode(cli.trim_mode)
+                .with_codons(cli.codons);
 
             if let Some(bakta_db) = cli.bakta_db {
                 config = config.with_bakta_db_path(bakta_db);
