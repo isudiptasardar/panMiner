@@ -6,6 +6,11 @@ use std::path::Path;
 use crate::error::Result;
 use crate::graph::PangenomeGraph;
 
+/// Escape a string for GML format (handle quotes and backslashes).
+fn escape_gml_string(s: &str) -> String {
+    s.replace('\\', "\\\\").replace('"', "\\\"")
+}
+
 /// Writer for GML (Graph Modelling Language) format.
 ///
 /// GML files can be visualized with Cytoscape and other graph tools.
@@ -15,39 +20,82 @@ impl GmlWriter {
     /// Write the pangenome graph to GML format.
     pub fn write(graph: &PangenomeGraph, path: &Path) -> Result<()> {
         let mut file = std::fs::File::create(path)?;
+        let mut writer = std::io::BufWriter::new(&mut file);
 
-        writeln!(file, "graph [")?;
-        writeln!(file, "  directed 0")?;
+        writeln!(writer, "graph [")?;
+        writeln!(writer, "  directed 0")?;
 
-        // Write nodes
-        for (cluster_id, node) in &graph.nodes {
-            writeln!(file, "  node [")?;
-            writeln!(file, "    id \"{}\"", cluster_id)?;
-            writeln!(file, "    label \"{}\"", cluster_id)?;
-            writeln!(file, "    support {}", node.support)?;
-            writeln!(file, "    is_paralog {}", if node.is_paralog { 1 } else { 0 })?;
+        // Nodes with full attributes (Panaroo-compatible)
+        for (_id, node) in &graph.nodes {
+            writeln!(writer, "  node [")?;
+            writeln!(writer, "    id \"{}\"", node.cluster_id)?;
+            writeln!(writer, "    label \"{}\"", node.cluster_id)?;
+            writeln!(writer, "    support {}", node.support)?;
+            writeln!(writer, "    is_paralog {}", if node.is_paralog { 1 } else { 0 })?;
 
-            if let Some(annotation) = node.annotations.iter().next() {
-                // Escape quotes in annotation
-                let escaped = annotation.replace('"', "\\\"");
-                writeln!(file, "    annotation \"{}\"", escaped)?;
+            // Length of centroid sequence
+            let length = node.centroid_sequence.as_ref().map(|s| s.len()).unwrap_or(0);
+            writeln!(writer, "    length {}", length)?;
+
+            // Centroid DNA sequence
+            if let Some(seq) = &node.centroid_sequence {
+                let seq_str = String::from_utf8_lossy(seq);
+                writeln!(writer, "    seq \"{}\"", escape_gml_string(&seq_str))?;
             }
 
-            writeln!(file, "  ]")?;
+            // Protein sequence
+            if let Some(seq) = &node.centroid_sequence {
+                let protein = crate::io::translate(seq);
+                let protein_str = String::from_utf8_lossy(&protein);
+                if !protein_str.is_empty() {
+                    writeln!(writer, "    protein \"{}\"", escape_gml_string(&protein_str))?;
+                }
+            }
+
+            // Genome IDs (comma-separated)
+            let genome_ids: Vec<String> = node.genomes.iter()
+                .map(|g| g.as_str().to_string())
+                .collect();
+            if !genome_ids.is_empty() {
+                writeln!(writer, "    genome_ids \"{}\"", genome_ids.join(","))?;
+            }
+
+            // Gene members (semicolon-separated)
+            let all_members: Vec<String> = node.gene_members.values()
+                .flatten()
+                .cloned()
+                .collect();
+            if !all_members.is_empty() {
+                writeln!(writer, "    member \"{}\"", all_members.join(";"))?;
+            }
+
+            // Annotation
+            if let Some(ann) = node.annotations.iter().next() {
+                writeln!(writer, "    annotation \"{}\"", escape_gml_string(ann))?;
+            }
+
+            writeln!(writer, "  ]")?;
         }
 
-        // Write edges
-        for ((from, to), edge) in &graph.edges {
-            writeln!(file, "  edge [")?;
-            writeln!(file, "    source \"{}\"", from)?;
-            writeln!(file, "    target \"{}\"", to)?;
-            writeln!(file, "    support {}", edge.support)?;
-            writeln!(file, "    genomes {}", edge.genomes.len())?;
-            writeln!(file, "  ]")?;
+        // Edges with genome IDs
+        for (_key, edge) in &graph.edges {
+            writeln!(writer, "  edge [")?;
+            writeln!(writer, "    source \"{}\"", edge.from)?;
+            writeln!(writer, "    target \"{}\"", edge.to)?;
+            writeln!(writer, "    support {}", edge.support)?;
+
+            // Genome IDs on edges
+            let edge_genome_ids: Vec<String> = edge.genomes.iter()
+                .map(|g| g.as_str().to_string())
+                .collect();
+            if !edge_genome_ids.is_empty() {
+                writeln!(writer, "    genome_ids \"{}\"", edge_genome_ids.join(","))?;
+            }
+
+            writeln!(writer, "  ]")?;
         }
 
-        writeln!(file, "]")?;
-
+        writeln!(writer, "]")?;
         Ok(())
     }
 }
@@ -87,5 +135,30 @@ mod tests {
         assert!(content.contains("graph ["));
         assert!(content.contains("node ["));
         assert!(content.contains("edge ["));
+    }
+
+    #[test]
+    fn test_gml_output_with_full_attributes() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("test.gml");
+
+        let mut graph = PangenomeGraph::new();
+        let mut node = Node::from_cluster(&GeneCluster::new("c1"));
+        node.centroid_sequence = Some(b"ATGCGT".to_vec());
+        node.support = 3;
+        node.genomes.insert(GenomeId::new("genome1"));
+        node.genomes.insert(GenomeId::new("genome2"));
+        node.gene_members.insert(GenomeId::new("genome1"), vec!["geneA".to_string()]);
+        node.gene_members.insert(GenomeId::new("genome2"), vec!["geneB".to_string()]);
+        graph.add_node(node);
+
+        GmlWriter::write(&graph, &path).unwrap();
+
+        let content = std::fs::read_to_string(&path).unwrap();
+        assert!(content.contains("length"), "GML should have length attribute");
+        assert!(content.contains("seq"), "GML should have seq attribute");
+        assert!(content.contains("protein"), "GML should have protein attribute");
+        assert!(content.contains("genome_ids"), "GML should have genome_ids attribute");
+        assert!(content.contains("member"), "GML should have member attribute");
     }
 }
