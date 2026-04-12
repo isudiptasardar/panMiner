@@ -16,6 +16,7 @@ mod fastani;
 mod skani;
 mod sourmash;
 mod ggcat;
+mod ggcaller;
 
 pub use mmap::MmapFile;
 pub use gff::GffParser;
@@ -31,3 +32,4 @@ pub use sourmash::{compute_mds, compute_mds_with_labels, MdsProjection, Sourmash
 #[cfg(feature = "sourmash")]
 pub use sourmash::compute_distance_matrix;
 pub use ggcat::{GGCATBuilder, CDBGGraph, CDBGStats, compute_cdbg_stats};
+pub use ggcaller::{GGCallerRunner, GGCallerOutput};
