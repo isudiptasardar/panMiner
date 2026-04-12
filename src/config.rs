@@ -66,6 +66,18 @@ pub enum AlignmentTool {
     Prank,
 }
 
+/// Alignment filtering method.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum FilterMethod {
+    /// No filtering
+    #[default]
+    None,
+    /// ClipKIT trimming
+    ClipKit,
+    /// BMGE entropy-based filtering
+    Bmge,
+}
+
 /// GPU backend preference.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub enum GpuBackend {
@@ -194,6 +206,8 @@ pub struct PanminerConfig {
     pub trim_mode: String,
     /// Generate codon alignments via MACSE
     pub codons: bool,
+    /// Alignment filtering method
+    pub filter_method: FilterMethod,
 
     // GWAS
     /// Run GWAS analysis (pyseer) after pangenome construction
@@ -250,6 +264,7 @@ impl Default for PanminerConfig {
             trim_alignment: false,
             trim_mode: String::from("smart-gap"),
             codons: false,
+            filter_method: FilterMethod::None,
             run_gwas: false,
             phenotype_file: None,
             force_cpu: false,
@@ -414,6 +429,12 @@ impl PanminerConfig {
     /// Enable codon alignment via MACSE.
     pub fn with_codons(mut self, codons: bool) -> Self {
         self.codons = codons;
+        self
+    }
+
+    /// Set alignment filtering method.
+    pub fn with_filter_method(mut self, method: FilterMethod) -> Self {
+        self.filter_method = method;
         self
     }
 

@@ -38,7 +38,7 @@ pub mod downstream;
 pub mod pipeline;
 
 // Re-exports for convenience
-pub use config::PanminerConfig;
+pub use config::{PanminerConfig, FilterMethod};
 pub use error::{Error, Result};
 pub use pipeline::PanminerPipeline;
 pub use graph::{PangenomeGraph, Gene, GeneCluster, Node, Edge, merge_pangenomes, MergeResult};

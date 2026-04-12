@@ -35,7 +35,7 @@ pub use sv_matrix::SVMatrixWriter;
 pub use summary::write_summary_stats;
 pub use codon::MacseRunner;
 pub use filter_pa::{FilterType, filter_presence_absence, parse_filter_types};
-pub use trim::{ClipKitRunner, TrimMode};
+pub use trim::{ClipKitRunner, TrimMode, BmgeRunner};
 pub use qc_stats::{write_qc_stats, write_qc_summary};
 pub use qc_viz::write_qc_html_report;
 
@@ -48,7 +48,7 @@ pub use html_viz::HtmlVizWriter;
 use std::path::PathBuf;
 use std::collections::HashMap;
 
-use crate::config::{OutputFormat, PanminerConfig};
+use crate::config::{OutputFormat, PanminerConfig, FilterMethod};
 use crate::error::Result;
 use crate::graph::PangenomeGraph;
 use crate::graph::BitPackedMatrix;
@@ -60,6 +60,7 @@ pub struct OutputWriter {
     trim_alignment: bool,
     trim_mode: String,
     codons: bool,
+    filter_method: FilterMethod,
 }
 
 impl OutputWriter {
@@ -71,6 +72,7 @@ impl OutputWriter {
             trim_alignment: config.trim_alignment,
             trim_mode: config.trim_mode.clone(),
             codons: config.codons,
+            filter_method: config.filter_method,
         }
     }
 
@@ -96,6 +98,7 @@ impl OutputWriter {
             matrix_roary_csv: None,
             alignment: None,
             codon_alignment: None,
+            bmge_alignment: None,
             graph: None,
             reference_fasta: None,
             gene_data: None,
@@ -182,6 +185,24 @@ impl OutputWriter {
                         }
                     }
 
+                    // BMGE filtering (if requested)
+                    if self.filter_method == FilterMethod::Bmge {
+                        if let Some(bmge) = BmgeRunner::detect() {
+                            let bmge_path = self.output_dir.join("core_gene_alignment.BMGE.aln");
+                            match bmge.filter(&path, &bmge_path, 0.2) {
+                                Ok(_) => {
+                                    paths.bmge_alignment = Some(bmge_path);
+                                    tracing::info!("Filtered alignment with BMGE");
+                                }
+                                Err(e) => {
+                                    tracing::warn!("BMGE filtering failed: {}", e);
+                                }
+                            }
+                        } else {
+                            tracing::warn!("BMGE not found. Install with: pip install bmge");
+                        }
+                    }
+
                     // Use trimmed path if available, otherwise original
                     if paths.alignment.is_none() {
                         paths.alignment = Some(path);
@@ -197,7 +218,7 @@ impl OutputWriter {
                 OutputFormat::Json => {
                     // Panaroo-style JSON output with gene_data.csv and pan_genome_reference.fa
                     let gene_data_path = self.output_dir.join("gene_data.csv");
-                    JsonWriter::write_gene_data(graph, &gene_data_path)?;
+                    JsonWriter::write_gene_data(graph, &graph.gene_lookup, &gene_data_path)?;
                     paths.gene_data = Some(gene_data_path);
                     tracing::info!("Wrote gene_data.csv");
 
@@ -301,6 +322,8 @@ pub struct OutputPaths {
     pub alignment: Option<PathBuf>,
     /// Codon alignment (MACSE)
     pub codon_alignment: Option<PathBuf>,
+    /// BMGE filtered alignment
+    pub bmge_alignment: Option<PathBuf>,
     /// Final pangenome graph (GML)
     pub graph: Option<PathBuf>,
     /// Panaroo-style reference FASTA (all genes)

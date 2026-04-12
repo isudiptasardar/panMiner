@@ -111,6 +111,82 @@ fn which_clipkit() -> Option<PathBuf> {
     which::which("clipkit").ok().or_else(|| which::which("clipkit.py").ok())
 }
 
+/// BMGE (Block Mapping and Gathering with Entropy) alignment filter runner.
+///
+/// BMGE filters poorly aligned columns from MSAs using entropy-based scoring.
+/// It runs via Python/Biopython.
+///
+/// Reference: Criscuolo & Gribaldo, BMC Evolutionary Biology 10, 210 (2010).
+pub struct BmgeRunner {
+    python_path: PathBuf,
+}
+
+impl BmgeRunner {
+    /// Create a new BmgeRunner with an explicit Python path.
+    pub fn new(python_path: PathBuf) -> Self {
+        Self { python_path }
+    }
+
+    /// Detect if BMGE is available via Python/Biopython.
+    pub fn detect() -> Option<Self> {
+        let python = if which::which("python3").is_ok() {
+            PathBuf::from("python3")
+        } else if which::which("python").is_ok() {
+            PathBuf::from("python")
+        } else {
+            return None;
+        };
+
+        let output = std::process::Command::new(&python)
+            .arg("-c")
+            .arg("import bmge")
+            .output()
+            .ok()?;
+
+        if output.status.success() {
+            Some(Self { python_path: python })
+        } else {
+            None
+        }
+    }
+
+    /// Get the runner name.
+    pub fn name(&self) -> &str {
+        "BMGE"
+    }
+
+    /// Filter an alignment using BMGE.
+    pub fn filter(
+        &self,
+        input_path: &Path,
+        output_path: &Path,
+        gap_threshold: f64,
+    ) -> crate::error::Result<PathBuf> {
+        let script = format!(
+            "import sys\nfrom Bio import AlignIO\nfrom bmge import bmge as bmge_filter\nalignment = AlignIO.read(sys.argv[1], 'fasta')\nfiltered = bmge_filter(alignment, gap_threshold={})\nAlignIO.write(filtered, sys.argv[2], 'fasta')\n",
+            gap_threshold
+        );
+
+        let output = std::process::Command::new(&self.python_path)
+            .arg("-c")
+            .arg(&script)
+            .arg(input_path)
+            .arg(output_path)
+            .output()
+            .map_err(|e| crate::Error::Output(format!("BMGE filter failed: {}", e)))?;
+
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            return Err(crate::Error::Output(format!(
+                "BMGE filtering failed: {}. Install with: pip install bmge",
+                stderr.trim()
+            )));
+        }
+
+        Ok(output_path.to_path_buf())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -146,5 +222,16 @@ mod tests {
     fn test_clipkit_name() {
         let runner = ClipKitRunner::new(PathBuf::from("clipkit"));
         assert_eq!(runner.name(), "ClipKIT");
+    }
+
+    #[test]
+    fn test_bmge_runner_creation() {
+        let runner = BmgeRunner::new(PathBuf::from("/usr/bin/python3"));
+        assert_eq!(runner.name(), "BMGE");
+    }
+
+    #[test]
+    fn test_bmge_detect() {
+        let _ = BmgeRunner::detect();
     }
 }

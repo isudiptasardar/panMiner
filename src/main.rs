@@ -118,6 +118,10 @@ struct Cli {
     #[arg(long)]
     codons: bool,
 
+    /// Alignment filtering method: none, clipkit, bmge
+    #[arg(long, default_value = "none")]
+    filter_alignment: String,
+
     /// Run GWAS analysis with pyseer after pangenome construction
     #[arg(long)]
     gwas: bool,
@@ -322,6 +326,14 @@ fn parse_pipeline_mode(s: &str) -> PipelineMode {
     match s.to_lowercase().as_str() {
         "dbg" => PipelineMode::Dbg,
         _ => PipelineMode::Gff,
+    }
+}
+
+fn parse_filter_method(s: &str) -> panminer::config::FilterMethod {
+    match s.to_lowercase().as_str() {
+        "bmge" => panminer::config::FilterMethod::Bmge,
+        "clipkit" => panminer::config::FilterMethod::ClipKit,
+        _ => panminer::config::FilterMethod::None,
     }
 }
 
@@ -610,7 +622,8 @@ fn main() -> anyhow::Result<()> {
                 .with_trim_alignment(cli.trim_alignment)
                 .with_trim_mode(cli.trim_mode)
                 .with_codons(cli.codons)
-                .with_run_gwas(cli.gwas);
+                .with_run_gwas(cli.gwas)
+                .with_filter_method(parse_filter_method(&cli.filter_alignment));
 
             if let Some(phenotype) = cli.phenotype {
                 config = config.with_phenotype_file(phenotype);
