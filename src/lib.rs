@@ -43,6 +43,7 @@ pub use error::{Error, Result};
 pub use pipeline::PanminerPipeline;
 pub use graph::{PangenomeGraph, Gene, GeneCluster, Node, Edge, merge_pangenomes, MergeResult};
 pub use config::OutputFormat;
+pub use config::PipelineMode;
 pub use io::{BaktaRunner, BaktaDbType, translate, translate_with_stop};
 
 /// Prelude module for common imports

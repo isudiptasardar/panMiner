@@ -552,6 +552,60 @@ mod tests {
     }
 
     #[test]
+    fn test_pipeline_mode_from_str() {
+        use std::str::FromStr;
+        assert_eq!(PipelineMode::from_str("gff").unwrap(), PipelineMode::Gff);
+        assert_eq!(PipelineMode::from_str("GFF").unwrap(), PipelineMode::Gff);
+        assert_eq!(PipelineMode::from_str("dbg").unwrap(), PipelineMode::Dbg);
+        assert_eq!(PipelineMode::from_str("DBG").unwrap(), PipelineMode::Dbg);
+        assert!(PipelineMode::from_str("invalid").is_err());
+    }
+
+    #[test]
+    fn test_pipeline_mode_display() {
+        assert_eq!(format!("{}", PipelineMode::Gff), "gff");
+        assert_eq!(format!("{}", PipelineMode::Dbg), "dbg");
+    }
+
+    #[test]
+    fn test_kmer_size_validation_dbg_mode() {
+        // Valid kmer_size in Dbg mode
+        let config = PanminerConfig::new()
+            .with_pipeline_mode(PipelineMode::Dbg)
+            .with_kmer_size(31)
+            .with_input_files(vec!["test.fa".into()]);
+        // Validate should not fail on kmer_size
+        if let Err(e) = config.validate() {
+            assert!(!e.to_string().contains("k-mer"), "Unexpected k-mer error: {}", e);
+        }
+
+        // kmer_size too small
+        let config = PanminerConfig::new()
+            .with_pipeline_mode(PipelineMode::Dbg)
+            .with_kmer_size(10)
+            .with_input_files(vec!["test.fa".into()]);
+        let err = config.validate().unwrap_err();
+        assert!(err.to_string().contains("k-mer size must be >= 15"), "Expected k-mer error, got: {}", err);
+
+        // kmer_size too large
+        let config = PanminerConfig::new()
+            .with_pipeline_mode(PipelineMode::Dbg)
+            .with_kmer_size(200)
+            .with_input_files(vec!["test.fa".into()]);
+        let err = config.validate().unwrap_err();
+        assert!(err.to_string().contains("k-mer size must be <= 127"), "Expected k-mer error, got: {}", err);
+    }
+
+    #[test]
+    fn test_pipeline_mode_builder() {
+        let config = PanminerConfig::new()
+            .with_pipeline_mode(PipelineMode::Dbg)
+            .with_kmer_size(51);
+        assert_eq!(config.pipeline_mode, PipelineMode::Dbg);
+        assert_eq!(config.kmer_size, 51);
+    }
+
+    #[test]
     fn test_compression_level_config() {
         let config = PanminerConfig::new().with_compression_level(10);
         assert_eq!(config.compression_level, 10);
