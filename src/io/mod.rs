@@ -1,7 +1,8 @@
 //! I/O module for PanMiner.
 //!
 //! This module provides memory-mapped file parsing for GFF3 and FASTA formats,
-//! compressed intermediate storage, and streaming pipeline support.
+//! compressed intermediate storage, streaming pipeline support, and QC tool
+//! integration (CheckM2, FastANI, sourmash).
 
 mod mmap;
 mod gff;
@@ -12,8 +13,9 @@ mod qc_traits;
 mod bakta;
 mod translate;
 mod fastani;
-#[cfg(feature = "sourmash")]
+mod skani;
 mod sourmash;
+mod ggcat;
 
 pub use mmap::MmapFile;
 pub use gff::GffParser;
@@ -24,5 +26,8 @@ pub use qc_traits::{GenomeQC, QcMode, QcRunner, CheckmQcRunner};
 pub use bakta::{BaktaRunner, BaktaDbType, is_gff_file, is_genbank_file, genbank_to_fasta};
 pub use translate::{translate, translate_with_stop};
 pub use fastani::FastAniRunner;
+pub use skani::SkaniRunner;
+pub use sourmash::{compute_mds, compute_mds_with_labels, MdsProjection, SourmashRunner};
 #[cfg(feature = "sourmash")]
-pub use sourmash::{compute_distance_matrix, compute_mds, MdsProjection};
+pub use sourmash::compute_distance_matrix;
+pub use ggcat::{GGCATBuilder, CDBGGraph, CDBGStats, compute_cdbg_stats};
