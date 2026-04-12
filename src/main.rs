@@ -4,7 +4,7 @@ use std::path::PathBuf;
 use clap::{Parser, Subcommand};
 use tracing_subscriber::EnvFilter;
 
-use panminer::config::{CorrectionMode, OutputFormat, PanminerConfig, QcMode};
+use panminer::config::{CorrectionMode, OutputFormat, PanminerConfig, PipelineMode, QcMode};
 use panminer::io::BaktaDbType;
 use panminer::output::{filter_presence_absence, parse_filter_types};
 use panminer::pipeline::PanminerPipeline;
@@ -41,6 +41,10 @@ struct Cli {
     /// Correction mode: strict, default, sensitive
     #[arg(long, default_value = "default")]
     mode: String,
+
+    /// Pipeline mode: gff (GFF3-annotated) or dbg (cDBG-based gene calling)
+    #[arg(long, default_value = "gff")]
+    pipeline_mode: String,
 
     /// Force CPU processing (disable GPU)
     #[arg(long)]
@@ -121,6 +125,10 @@ struct Cli {
     /// Path to phenotype file for GWAS (TSV: genome_id phenotype_value)
     #[arg(long)]
     phenotype: Option<PathBuf>,
+
+    /// k-mer size for cDBG construction (only used with --pipeline-mode dbg)
+    #[arg(long, default_value = "31")]
+    kmer_size: usize,
 }
 
 /// Subcommands for PanMiner.
@@ -164,6 +172,10 @@ enum Commands {
         /// Compute pairwise ANI/distance matrix
         #[arg(long)]
         distance: bool,
+
+        /// Generate MDS scatter plot and HTML report
+        #[arg(long)]
+        mds: bool,
 
         /// Verbose output
         #[arg(short, long)]
@@ -306,6 +318,13 @@ fn parse_bakta_db_type(s: &str) -> BaktaDbType {
     }
 }
 
+fn parse_pipeline_mode(s: &str) -> PipelineMode {
+    match s.to_lowercase().as_str() {
+        "dbg" => PipelineMode::Dbg,
+        _ => PipelineMode::Gff,
+    }
+}
+
 fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
 
@@ -329,7 +348,7 @@ fn main() -> anyhow::Result<()> {
             tracing::info!("Filtered output written to: {:?}", output);
             tracing::info!("Done.");
         }
-        Some(Commands::Qc { input, output, qc_mode: _, distance, verbose }) => {
+        Some(Commands::Qc { input, output, qc_mode: _, distance, mds, verbose }) => {
             let filter = if verbose {
                 EnvFilter::new("debug")
             } else {
@@ -371,15 +390,38 @@ fn main() -> anyhow::Result<()> {
             panminer::output::write_qc_summary(&qc_results, &qc_summary_path)?;
             tracing::info!("Wrote QC summary to: {:?}", qc_summary_path);
 
-            // Optionally compute distance matrix
-            if distance && !input.is_empty() {
+            // Optionally compute distance matrix and MDS projection
+            let mds_projection: Option<panminer::io::MdsProjection> = if (distance || mds) && !input.is_empty() {
                 if let Some(dist) = qc_runner.compute_distance_matrix(&input) {
                     let dist_path = output.join("distance_matrix.csv");
                     dist.write_csv(&dist_path)?;
                     tracing::info!("Wrote distance matrix to: {:?}", dist_path);
+
+                    // Compute MDS with real genome labels
+                    let labels: Vec<String> = input.iter()
+                        .filter_map(|p| p.file_stem().and_then(|s| s.to_str()).map(|s| s.to_string()))
+                        .collect();
+                    if let Ok(mds_proj) = panminer::io::compute_mds_with_labels(&dist.distance_matrix, &labels) {
+                        let mds_path = output.join("mds_coordinates.csv");
+                        mds_proj.write_csv(&mds_path)?;
+                        tracing::info!("Wrote MDS coordinates to: {:?}", mds_path);
+                        Some(mds_proj)
+                    } else {
+                        None
+                    }
                 } else {
                     tracing::warn!("No distance tool available. Install FastANI or enable sourmash feature.");
+                    None
                 }
+            } else {
+                None
+            };
+
+            // Write HTML report if requested
+            if mds {
+                let html_path = output.join("qc_report.html");
+                panminer::output::write_qc_html_report(&qc_results, mds_projection.as_ref(), &html_path)?;
+                tracing::info!("Wrote QC HTML report to: {:?}", html_path);
             }
 
             tracing::info!("QC complete. Results in: {:?}", output);
@@ -417,7 +459,7 @@ fn main() -> anyhow::Result<()> {
             }
             tracing::info!("Done.");
         }
-        Some(Commands::Analyze { input, gwas, gwas_tool, phenotypes, panstripe, tree, amr, amr_database, organism, neighborhood, seed_gene, neighborhood_depth, accumulation, num_samples, export_grapetree, export_itol, verbose }) => {
+        Some(Commands::Analyze { input, gwas, gwas_tool, phenotypes, panstripe, tree: _, amr, amr_database: _, organism: _, neighborhood, seed_gene, neighborhood_depth, accumulation, num_samples, export_grapetree, export_itol, verbose }) => {
             let filter = if verbose {
                 EnvFilter::new("debug")
             } else {
@@ -581,6 +623,10 @@ fn main() -> anyhow::Result<()> {
                 config = config.with_bakta_threads(bakta_threads);
             }
             config = config.with_bakta_db_type(parse_bakta_db_type(&cli.bakta_db_type));
+
+            config = config
+                .with_pipeline_mode(parse_pipeline_mode(&cli.pipeline_mode))
+                .with_kmer_size(cli.kmer_size);
 
             // Validate
             config.validate()?;
