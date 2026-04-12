@@ -192,7 +192,17 @@ impl PanminerPipeline {
         // Phase 6: Generate outputs
         tracing::info!("Phase 6: Generating outputs");
         let writer = OutputWriter::new(&self.config);
-        let paths = writer.write_all(&graph, &matrix)?;
+
+        // Build gene_members map for Roary CSV output
+        let gene_members: HashMap<String, HashMap<String, Vec<String>>> =
+            graph.nodes.iter().map(|(cid, node)| {
+                let inner: HashMap<String, Vec<String>> = node.gene_members.iter()
+                    .map(|(gid, genes)| (gid.as_str().to_string(), genes.clone()))
+                    .collect();
+                (cid.as_str().to_string(), inner)
+            }).collect();
+
+        let paths = writer.write_all(&graph, &matrix, &gene_members)?;
 
         // Phase 7: GWAS analysis (optional)
         if self.config.run_gwas {
@@ -339,7 +349,17 @@ impl PanminerPipeline {
         // --- Phase 9: Generate outputs (reuses existing) ---
         tracing::info!("Phase 9: Generating outputs");
         let writer = OutputWriter::new(&self.config);
-        let output_paths = writer.write_all(&graph, &matrix)?;
+
+        // Build gene_members map for Roary CSV output
+        let gene_members: HashMap<String, HashMap<String, Vec<String>>> =
+            graph.nodes.iter().map(|(cid, node)| {
+                let inner: HashMap<String, Vec<String>> = node.gene_members.iter()
+                    .map(|(gid, genes)| (gid.as_str().to_string(), genes.clone()))
+                    .collect();
+                (cid.as_str().to_string(), inner)
+            }).collect();
+
+        let output_paths = writer.write_all(&graph, &matrix, &gene_members)?;
 
         // Write QC results if any
         if !qc_results.is_empty() {

@@ -24,6 +24,7 @@ mod filter_pa;
 mod trim;
 mod codon;
 pub mod qc_stats;
+pub mod qc_viz;
 
 pub use matrix::MatrixWriter;
 pub use alignment::AlignmentWriter;
@@ -36,6 +37,7 @@ pub use codon::MacseRunner;
 pub use filter_pa::{FilterType, filter_presence_absence, parse_filter_types};
 pub use trim::{ClipKitRunner, TrimMode};
 pub use qc_stats::{write_qc_stats, write_qc_summary};
+pub use qc_viz::write_qc_html_report;
 
 #[cfg(feature = "parquet")]
 pub use parquet::ParquetWriter;
@@ -44,6 +46,7 @@ pub use parquet::ParquetWriter;
 pub use html_viz::HtmlVizWriter;
 
 use std::path::PathBuf;
+use std::collections::HashMap;
 
 use crate::config::{OutputFormat, PanminerConfig};
 use crate::error::Result;
@@ -82,6 +85,7 @@ impl OutputWriter {
         &self,
         graph: &PangenomeGraph,
         matrix: &BitPackedMatrix,
+        gene_members: &HashMap<String, HashMap<String, Vec<String>>>,
     ) -> Result<OutputPaths> {
         self.ensure_output_dir()?;
 
@@ -89,6 +93,7 @@ impl OutputWriter {
             output_dir: self.output_dir.clone(),
             matrix_csv: None,
             matrix_rtab: None,
+            matrix_roary_csv: None,
             alignment: None,
             codon_alignment: None,
             graph: None,
@@ -122,6 +127,16 @@ impl OutputWriter {
                     MatrixWriter::write_tsv(matrix, &rtab_path)?;
                     paths.matrix_rtab = Some(rtab_path);
                     tracing::info!("Wrote gene presence/absence matrix (Rtab)");
+
+                    // Roary-compatible gene member CSV
+                    let roary_gene_path = self.output_dir.join("gene_presence_absence_roary.csv");
+                    match MatrixWriter::write_roary_gene_csv(matrix, gene_members, &roary_gene_path) {
+                        Ok(_) => {
+                            paths.matrix_roary_csv = Some(roary_gene_path);
+                            tracing::info!("Wrote gene presence/absence Roary CSV with gene member IDs");
+                        }
+                        Err(e) => tracing::warn!("Failed to write Roary gene CSV: {}", e),
+                    }
                 }
                 OutputFormat::Alignment => {
                     // Panaroo naming: core_gene_alignment.aln
@@ -280,6 +295,8 @@ pub struct OutputPaths {
     pub matrix_csv: Option<PathBuf>,
     /// Gene presence/absence matrix (Rtab - Roary compatible binary)
     pub matrix_rtab: Option<PathBuf>,
+    /// Gene presence/absence matrix with gene member IDs (Roary compatible)
+    pub matrix_roary_csv: Option<PathBuf>,
     /// Core gene alignment
     pub alignment: Option<PathBuf>,
     /// Codon alignment (MACSE)

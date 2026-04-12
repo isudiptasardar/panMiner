@@ -1,5 +1,6 @@
 //! Presence/absence matrix output (CSV/TSV).
 
+use std::collections::HashMap;
 use std::path::Path;
 use csv::Writer;
 
@@ -81,5 +82,88 @@ impl MatrixWriter {
 
         writer.flush()?;
         Ok(())
+    }
+
+    /// Write a Roary-compatible gene P/A CSV with semicolon-delimited gene member IDs.
+    ///
+    /// Same 14-column header as `write_roary_csv`, but per-genome cells contain
+    /// semicolon-delimited gene IDs (e.g., "geneA;geneB") instead of just the cluster ID.
+    /// This matches Panaroo's `gene_presence_absence_roary.csv` format.
+    pub fn write_roary_gene_csv(
+        matrix: &BitPackedMatrix,
+        gene_members: &HashMap<String, HashMap<String, Vec<String>>>,
+        path: &Path,
+    ) -> Result<()> {
+        use std::io::Write;
+        let mut file = std::fs::File::create(path)?;
+        let mut writer = std::io::BufWriter::new(&mut file);
+
+        // Header: 14 fixed columns + per-genome columns
+        write!(writer, "Gene,Non-unique Gene name,Annotation,No. isolates,No. sequences,Avg sequences per isolate,Genome Fragment,Order within Fragment,Accessory Fragment,Accessory Order with Fragment,QC,Min group size nuc,Max group size nuc,Avg group size nuc")?;
+        for name in &matrix.genome_names {
+            write!(writer, ",{}", name)?;
+        }
+        writeln!(writer)?;
+
+        // Data rows
+        for (cluster_idx, cluster_id) in matrix.cluster_ids.iter().enumerate() {
+            let count_present = matrix.count_present(cluster_idx);
+            let avg = if count_present > 0 { "1.00" } else { "0.00" };
+
+            write!(writer, "{},{},,{},{},{},,,,,,,,",
+                cluster_id, cluster_id, count_present, count_present, avg)?;
+
+            // Get gene members for this cluster
+            let members = gene_members.get(cluster_id);
+
+            for genome_idx in 0..matrix.num_genomes() {
+                let genome_name = &matrix.genome_names[genome_idx];
+                if matrix.get(genome_idx, cluster_idx) {
+                    if let Some(members) = members {
+                        if let Some(gene_ids) = members.get(genome_name) {
+                            write!(writer, ",{}", gene_ids.join(";"))?;
+                        } else {
+                            write!(writer, ",{}", cluster_id)?;
+                        }
+                    } else {
+                        write!(writer, ",{}", cluster_id)?;
+                    }
+                } else {
+                    write!(writer, ",")?;
+                }
+            }
+            writeln!(writer)?;
+        }
+
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_write_roary_gene_csv() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("roary_gene.csv");
+
+        let mut matrix = BitPackedMatrix::new(2, 1);
+        matrix.set_genome_names(vec!["genome1".to_string(), "genome2".to_string()]);
+        matrix.set_cluster_ids(vec!["cluster_0".to_string()]);
+        matrix.set(0, 0, true);
+        matrix.set(1, 0, true);
+
+        let mut gene_members: HashMap<String, HashMap<String, Vec<String>>> = HashMap::new();
+        let mut members = HashMap::new();
+        members.insert("genome1".to_string(), vec!["geneA".to_string()]);
+        members.insert("genome2".to_string(), vec!["geneB".to_string(), "geneC".to_string()]);
+        gene_members.insert("cluster_0".to_string(), members);
+
+        MatrixWriter::write_roary_gene_csv(&matrix, &gene_members, &path).unwrap();
+
+        let content = std::fs::read_to_string(&path).unwrap();
+        assert!(content.contains("geneA"), "Should contain geneA in genome1 column");
+        assert!(content.contains("geneB;geneC"), "Should contain semicolon-delimited genes in genome2 column");
     }
 }
