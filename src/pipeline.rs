@@ -4,7 +4,7 @@ use rayon::prelude::*;
 use std::collections::HashMap;
 use std::path::PathBuf;
 
-use crate::config::PanminerConfig;
+use crate::config::{PanminerConfig, PipelineMode};
 use crate::clustering::{Clusterer, CpuClusterer, MMseqsRunner};
 use crate::correction::{ContaminationRemover, ContigEndPruner, FragmentMerger, MissingGeneRecoverer, MisassemblyEdgeCleaner, ParalogResolver, DistanceCache};
 use crate::error::{Error, Result};
@@ -40,6 +40,11 @@ impl PanminerPipeline {
             .ok(); // Ignore error if already initialized
 
         tracing::info!("Using {} threads", threads);
+
+        // Dispatch based on pipeline mode
+        if self.config.pipeline_mode == PipelineMode::Dbg {
+            return self.run_dbg_mode();
+        }
 
         // Phase 0: Pre-processing QC (optional)
         let qc_results = if self.config.enable_qc {
@@ -209,6 +214,143 @@ impl PanminerPipeline {
 
         tracing::info!("Pipeline complete");
         Ok(paths)
+    }
+
+    /// Run the cDBG-based pipeline (GGCAT + ggCaller).
+    ///
+    /// Flow:
+    /// 1. Build colored cDBG with GGCAT (feature-gated)
+    /// 2. Call genes with ggCaller (subprocess)
+    /// 3. Parse ggCaller GFF output into PanMiner Gene structs
+    /// 4. Build pangenome graph (reuses existing code)
+    /// 5. Run corrections (reuses existing code)
+    /// 6. Generate outputs (reuses existing code)
+    fn run_dbg_mode(&self) -> Result<OutputPaths> {
+        tracing::info!("Running cDBG-based pipeline (mode=dbg)");
+
+        // --- Phase 0: Pre-processing QC (optional, reuses existing) ---
+        let qc_results = if self.config.enable_qc {
+            tracing::info!("Phase 0: Running pre-processing QC");
+            self.run_qc()?
+        } else {
+            tracing::info!("Phase 0: Skipped (QC disabled)");
+            vec![]
+        };
+
+        // --- Phase 1: Build colored cDBG with GGCAT ---
+        let genomes: Vec<(PathBuf, String)> = self.config.input_files
+            .iter()
+            .filter_map(|p| {
+                let name = p.file_stem()
+                    .map(|s| s.to_string_lossy().to_string())
+                    .unwrap_or_else(|| "unknown".to_string());
+                Some((p.clone(), name))
+            })
+            .collect();
+
+        if genomes.is_empty() {
+            return Err(Error::NoGenomes);
+        }
+
+        #[cfg(feature = "dbg")]
+        let _cdbg_graph = {
+            let cdbg_output_dir = self.config.output_dir.join("cdbg");
+            let builder = crate::io::GGCATBuilder::new()
+                .with_threads(self.config.effective_threads())
+                .with_kmer_size(self.config.kmer_size);
+            builder.build_colored_cdbg(&genomes, self.config.kmer_size, &cdbg_output_dir)?
+        };
+
+        #[cfg(not(feature = "dbg"))]
+        tracing::warn!(
+            "cDBG mode requested but 'dbg' feature not enabled. \
+             Recompile with --features dbg for GGCAT support. Skipping cDBG build."
+        );
+
+        // --- Phase 2: Call genes with ggCaller ---
+        let ggcaller_runner = crate::io::GGCallerRunner::detect()
+            .ok_or_else(Error::ggcaller_not_found)?;
+
+        let ggcaller_output_dir = self.config.output_dir.join("ggcaller_output");
+        let ggcaller_output = ggcaller_runner.call_genes(
+            &self.config.input_files,
+            &ggcaller_output_dir,
+            self.config.effective_threads(),
+        )?;
+
+        // --- Phase 3: Parse ggCaller GFF output ---
+        let gff_files = crate::io::GGCallerRunner::parse_gff_paths(&ggcaller_output)?;
+
+        tracing::info!(
+            "Parsed {} GFF files from ggCaller output",
+            gff_files.len(),
+        );
+
+        if gff_files.is_empty() {
+            return Err(Error::InvalidInput(
+                "ggCaller produced no GFF output files".to_string(),
+            ));
+        }
+
+        // --- Phase 4: Parse GFF files (reuses existing) ---
+        tracing::info!("Phase 4: Parsing {} GFF files from ggCaller", gff_files.len());
+        let (genes, genome_ids, contig_dna) = self.parse_inputs_from(&gff_files)?;
+        tracing::info!("Parsed {} genes from {} genomes", genes.len(), genome_ids.len());
+
+        if genes.is_empty() {
+            return Err(Error::InvalidInput("No genes found in ggCaller GFF output".to_string()));
+        }
+
+        // --- Phase 5: Cluster genes (reuses existing) ---
+        tracing::info!("Phase 5: Clustering genes");
+        let mut clusters = self.cluster_genes(&genes)?;
+        tracing::info!("Found {} clusters", clusters.len());
+
+        // Mark paralog clusters
+        ParalogResolver::mark_paralog_clusters(&mut clusters, &genes);
+        let paralog_count = clusters.iter().filter(|c| c.is_paralog).count();
+        if paralog_count > 0 {
+            tracing::info!("Marked {} clusters as containing paralogs", paralog_count);
+        }
+
+        // --- Phase 6: Build pangenome graph (reuses existing) ---
+        tracing::info!("Phase 6: Building pangenome graph");
+        let concurrent_graph = self.build_graph(&clusters, &genes, &contig_dna);
+        tracing::info!(
+            "Graph: {} nodes, {} edges",
+            concurrent_graph.node_count(),
+            concurrent_graph.edge_count()
+        );
+
+        // --- Phase 7: Run corrections (reuses existing) ---
+        tracing::info!("Phase 7: Running error correction");
+        self.run_corrections(&concurrent_graph, genome_ids.len())?;
+        tracing::info!(
+            "After correction: {} nodes, {} edges",
+            concurrent_graph.node_count(),
+            concurrent_graph.edge_count()
+        );
+
+        // --- Phase 8: Build presence/absence matrix (reuses existing) ---
+        tracing::info!("Phase 8: Building presence/absence matrix");
+        let graph = concurrent_graph.to_standard();
+        let matrix = self.build_matrix(&graph, &genome_ids);
+
+        // --- Phase 9: Generate outputs (reuses existing) ---
+        tracing::info!("Phase 9: Generating outputs");
+        let writer = OutputWriter::new(&self.config);
+        let output_paths = writer.write_all(&graph, &matrix)?;
+
+        // Write QC results if any
+        if !qc_results.is_empty() {
+            let stats_path = self.config.output_dir.join("qc_stats.csv");
+            if let Err(e) = write_qc_stats(&qc_results, &stats_path) {
+                tracing::warn!("Failed to write QC stats: {}", e);
+            }
+        }
+
+        tracing::info!("cDBG pipeline complete. Output: {:?}", output_paths.output_dir);
+        Ok(output_paths)
     }
 
     /// Run pre-processing QC on all input files.
