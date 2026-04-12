@@ -132,6 +132,19 @@ impl Error {
             path
         ))
     }
+
+    /// Create an error for when ggCaller is not installed.
+    pub fn ggcaller_not_found() -> Self {
+        Self::ExternalTool("ggCaller not found: install with `conda install -c bioconda ggcaller` or see https://github.com/bacpop/ggCaller".to_string())
+    }
+
+    /// Create an error for when a GGCAT cDBG build fails.
+    pub fn ggcat_build_failed(reason: &str) -> Self {
+        Self::ExternalTool(format!(
+            "GGCAT cDBG build failed: {}. Check input FASTA quality (low N50, high N content can cause failures).",
+            reason
+        ))
+    }
 }
 
 #[cfg(test)]
@@ -166,5 +179,17 @@ mod tests {
 
         let err = Error::genbank_requires_bakta(std::path::Path::new("test.gb"));
         assert!(err.to_string().contains("GenBank input requires Bakta"));
+    }
+
+    #[test]
+    fn test_ggcaller_not_found() {
+        let err = Error::ggcaller_not_found();
+        assert!(err.to_string().contains("ggCaller not found"));
+    }
+
+    #[test]
+    fn test_ggcat_build_failed() {
+        let err = Error::ggcat_build_failed("out of memory");
+        assert!(err.to_string().contains("GGCAT cDBG build failed"));
     }
 }
