@@ -80,6 +80,44 @@ pub enum GpuBackend {
     Wgpu,
 }
 
+/// Pipeline mode: GFF3-based (default) or cDBG-based gene calling.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum PipelineMode {
+    /// GFF3-annotated input (default)
+    #[default]
+    Gff,
+    /// cDBG-based gene calling via GGCAT + ggCaller
+    Dbg,
+}
+
+impl PipelineMode {
+    /// Get string representation for CLI/display.
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            PipelineMode::Gff => "gff",
+            PipelineMode::Dbg => "dbg",
+        }
+    }
+}
+
+impl std::fmt::Display for PipelineMode {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.as_str())
+    }
+}
+
+impl std::str::FromStr for PipelineMode {
+    type Err = String;
+
+    fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
+        match s.to_lowercase().as_str() {
+            "gff" => Ok(PipelineMode::Gff),
+            "dbg" => Ok(PipelineMode::Dbg),
+            _ => Err(format!("Invalid pipeline mode: '{}'. Use 'gff' or 'dbg'.", s)),
+        }
+    }
+}
+
 /// Main configuration for PanMiner pipeline.
 #[derive(Clone, Debug)]
 pub struct PanminerConfig {
@@ -169,6 +207,12 @@ pub struct PanminerConfig {
     /// Preferred GPU backend
     pub gpu_backend: GpuBackend,
 
+    // Pipeline mode
+    /// Pipeline mode: GFF3 or cDBG-based
+    pub pipeline_mode: PipelineMode,
+    /// k-mer size for cDBG construction (default: 31)
+    pub kmer_size: usize,
+
     // Verbosity
     /// Enable verbose logging
     pub verbose: bool,
@@ -210,6 +254,8 @@ impl Default for PanminerConfig {
             phenotype_file: None,
             force_cpu: false,
             gpu_backend: GpuBackend::Auto,
+            pipeline_mode: PipelineMode::Gff,
+            kmer_size: 31,
             verbose: false,
         }
     }
@@ -383,6 +429,18 @@ impl PanminerConfig {
         self
     }
 
+    /// Set pipeline mode (GFF3 or cDBG-based).
+    pub fn with_pipeline_mode(mut self, mode: PipelineMode) -> Self {
+        self.pipeline_mode = mode;
+        self
+    }
+
+    /// Set k-mer size for cDBG construction.
+    pub fn with_kmer_size(mut self, kmer_size: usize) -> Self {
+        self.kmer_size = kmer_size;
+        self
+    }
+
     /// Validate configuration.
     pub fn validate(&self) -> crate::Result<()> {
         if self.input_files.is_empty() {
@@ -408,6 +466,18 @@ impl PanminerConfig {
                 "collapse_threshold must be between 0.0 and 1.0, got {}",
                 self.collapse_threshold
             )));
+        }
+
+        // Validate cDBG mode requirements
+        if self.pipeline_mode == PipelineMode::Dbg && self.kmer_size < 15 {
+            return Err(crate::Error::Config(
+                "k-mer size must be >= 15 for cDBG construction".to_string(),
+            ));
+        }
+        if self.pipeline_mode == PipelineMode::Dbg && self.kmer_size > 127 {
+            return Err(crate::Error::Config(
+                "k-mer size must be <= 127 for cDBG construction".to_string(),
+            ));
         }
 
         Ok(())
@@ -457,7 +527,30 @@ mod tests {
         assert_eq!(config.chunk_size, 50);
         assert_eq!(config.mode, CorrectionMode::Strict);
     }
-}
+
+    #[test]
+    fn test_pipeline_mode_gff() {
+        let mode = PipelineMode::Gff;
+        assert_eq!(mode.as_str(), "gff");
+    }
+
+    #[test]
+    fn test_pipeline_mode_dbg() {
+        let mode = PipelineMode::Dbg;
+        assert_eq!(mode.as_str(), "dbg");
+    }
+
+    #[test]
+    fn test_pipeline_mode_default() {
+        assert_eq!(PipelineMode::default(), PipelineMode::Gff);
+    }
+
+    #[test]
+    fn test_kmer_size_default() {
+        let config = PanminerConfig::default();
+        assert_eq!(config.kmer_size, 31);
+    }
+
     #[test]
     fn test_compression_level_config() {
         let config = PanminerConfig::new().with_compression_level(10);
@@ -470,3 +563,4 @@ mod tests {
         let bad_config2 = PanminerConfig::new().with_compression_level(23); // too high (max 22)
         assert!(bad_config2.validate().is_err());
     }
+}
