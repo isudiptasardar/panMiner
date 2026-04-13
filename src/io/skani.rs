@@ -2,7 +2,9 @@
 //!
 //! skani uses sparse k-mer chaining for fast, robust genome comparison.
 //! It is significantly faster than FastANI and more robust for incomplete
-//! genomes (MAGs) than both FastANI and sourmash.
+//! genomes (MAGs). PanMiner uses skani as its sole ANI/distance estimation tool.
+//!
+//! Install: `conda install -c bioconda skani`
 //!
 //! Reference: Shaw & Yu, "Fast and robust metagenomic sequence comparison
 //! through sparse chaining with skani", Nature Methods 20, 1661–1665 (2023).

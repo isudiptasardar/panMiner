@@ -1,213 +1,12 @@
-//! Sourmash-based genome distance estimation and MDS projection.
+//! Classical MDS (metric multidimensional scaling) projection.
 //!
-//! This module provides:
-//! - `SourmashRunner`: Subprocess runner for computing MinHash distance matrices
-//!   via the `sourmash` CLI (always compiled, requires sourmash installed)
-//! - `MdsProjection`: Classical MDS projection from a distance matrix into 2D
-//! - `compute_mds` / `compute_mds_with_labels`: MDS computation (pure Rust, always available)
-//! - `compute_distance_matrix`: Feature-gated direct sourmash API integration
-//!
-//! The core MDS projection and `SourmashRunner` are always available.
-//! The `sourmash` feature gate only controls the direct library integration
-//! (`compute_distance_matrix`), which requires the sourmash Rust bindings.
+//! This module provides pure-Rust MDS projection from a distance matrix into 2D
+//! space, used for QC visualization scatter plots. No external dependencies are
+//! required — the implementation uses power iteration for eigendecomposition.
 
 use std::io::Write;
-use std::path::{Path, PathBuf};
-use std::process::Command;
 
 use crate::error::Result;
-
-/// Sourmash subprocess runner for computing MinHash distance matrices.
-///
-/// Uses `sourmash sketch` to create signatures and `sourmash compare`
-/// to compute pairwise distances between genomes.
-pub struct SourmashRunner {
-    /// Path to sourmash binary
-    sourmash_path: PathBuf,
-}
-
-impl SourmashRunner {
-    /// Create a new SourmashRunner with an explicit path.
-    pub fn new(sourmash_path: PathBuf) -> Self {
-        Self { sourmash_path }
-    }
-
-    /// Detect if sourmash is installed on the system.
-    ///
-    /// Returns `Some(SourmashRunner)` if `sourmash --version` succeeds,
-    /// `None` otherwise.
-    pub fn detect() -> Option<Self> {
-        let path = which_sourmash()?;
-        Some(Self { sourmash_path: path })
-    }
-
-    /// Get the path to the sourmash binary.
-    pub fn path(&self) -> &Path {
-        &self.sourmash_path
-    }
-
-    /// Compute a pairwise distance matrix for all genomes using sourmash.
-    ///
-    /// Workflow:
-    /// 1. Create MinHash sketches for each genome using `sourmash sketch`
-    /// 2. Compute pairwise distances using `sourmash compare`
-    /// 3. Parse the output into a symmetric distance matrix
-    ///
-    /// Returns a matrix where result[i][j] is the distance between genome i
-    /// and genome j (0.0 = identical, 1.0 = completely different).
-    pub fn compute_distance_matrix(&self, genomes: &[PathBuf]) -> Result<Vec<Vec<f64>>> {
-        if genomes.is_empty() {
-            return Ok(Vec::new());
-        }
-
-        let temp_dir = tempfile::tempdir()?;
-        let sig_dir = temp_dir.path().join("signatures");
-        std::fs::create_dir_all(&sig_dir)?;
-
-        // Step 1: Create sketches for each genome
-        tracing::info!("Creating MinHash sketches for {} genomes", genomes.len());
-        for genome_path in genomes {
-            let genome_name = genome_path
-                .file_stem()
-                .and_then(|s| s.to_str())
-                .unwrap_or("unknown");
-            let sig_path = sig_dir.join(format!("{}.sig.gz", genome_name));
-
-            let output = Command::new(&self.sourmash_path)
-                .arg("sketch")
-                .arg("dna")
-                .arg("-p")
-                .arg("1") // single thread for sketching
-                .arg("-o")
-                .arg(&sig_path)
-                .arg(genome_path)
-                .output()
-                .map_err(|e| crate::Error::ExternalTool(format!("sourmash sketch failed: {}", e)))?;
-
-            if !output.status.success() {
-                let stderr = String::from_utf8_lossy(&output.stderr);
-                return Err(crate::Error::ExternalTool(format!(
-                    "sourmash sketch failed for {}: {}",
-                    genome_name,
-                    stderr.trim()
-                )));
-            }
-        }
-
-        // Step 2: Collect all signature files
-        let sig_files: Vec<PathBuf> = std::fs::read_dir(&sig_dir)?
-            .filter_map(|entry| {
-                let e = entry.ok()?;
-                let path = e.path();
-                if path.extension().map_or(false, |ext| ext == "gz" || ext == "sig") {
-                    Some(path)
-                } else {
-                    None
-                }
-            })
-            .collect();
-
-        if sig_files.len() != genomes.len() {
-            return Err(crate::Error::Output(format!(
-                "Expected {} signature files, found {}",
-                genomes.len(),
-                sig_files.len()
-            )));
-        }
-
-        // Step 3: Run sourmash compare
-        let compare_output_path = temp_dir.path().join("compare.csv");
-        let sig_list_path = temp_dir.path().join("sig_list.txt");
-        {
-            let mut list_file = std::fs::File::create(&sig_list_path)?;
-            for sig in &sig_files {
-                writeln!(list_file, "{}", sig.display())?;
-            }
-        }
-
-        tracing::info!("Computing pairwise distances for {} genomes", genomes.len());
-        let output = Command::new(&self.sourmash_path)
-            .arg("compare")
-            .arg("-k")
-            .arg("31")
-            .arg("--dna")
-            .arg("-o")
-            .arg(&compare_output_path)
-            .arg("--from-file")
-            .arg(&sig_list_path)
-            .output()
-            .map_err(|e| crate::Error::ExternalTool(format!("sourmash compare failed: {}", e)))?;
-
-        if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            return Err(crate::Error::ExternalTool(format!(
-                "sourmash compare failed: {}",
-                stderr.trim()
-            )));
-        }
-
-        // Step 4: Parse the compare output (CSV with header of genome names)
-        parse_sourmash_compare(&compare_output_path, genomes)
-    }
-}
-
-/// Find the sourmash binary on PATH.
-fn which_sourmash() -> Option<PathBuf> {
-    which::which("sourmash").ok()
-}
-
-/// Parse sourmash compare output into a distance matrix.
-///
-/// The sourmash compare output CSV has format:
-/// ```text
-/// ,genome_0,genome_1,...
-/// genome_0,0.00,0.05,...
-/// genome_1,0.05,0.00,...
-/// ...
-/// ```
-///
-/// The values are Jaccard similarities (0=identical, 1=completely different).
-fn parse_sourmash_compare(path: &Path, genomes: &[PathBuf]) -> Result<Vec<Vec<f64>>> {
-    let content = std::fs::read_to_string(path)?;
-    let mut lines = content.lines();
-
-    // Skip header line
-    let _header = lines.next().ok_or_else(|| {
-        crate::Error::Output("sourmash compare output is empty".to_string())
-    })?;
-
-    let n = genomes.len();
-    let mut matrix = vec![vec![0.0; n]; n];
-
-    for (i, line) in lines.enumerate() {
-        if i >= n {
-            break;
-        }
-        let parts: Vec<&str> = line.split(',').collect();
-        // First column is the row label, then distance values
-        for (j, val_str) in parts.iter().skip(1).enumerate() {
-            if j < n {
-                if let Ok(similarity) = val_str.trim().parse::<f64>() {
-                    // sourmash compare outputs similarity (1-distance),
-                    // we convert to distance
-                    let distance = 1.0 - similarity;
-                    matrix[i][j] = distance;
-                    matrix[j][i] = distance;
-                }
-            }
-        }
-        // Diagonal is 0 (self-distance)
-        matrix[i][i] = 0.0;
-    }
-
-    Ok(matrix)
-}
-
-/// Find the length from the header (number of columns minus label column).
-#[allow(dead_code)]
-fn parse_header_count(header: &str) -> usize {
-    header.split(',').count().saturating_sub(1)
-}
 
 /// Result of an MDS projection.
 #[derive(Debug, Clone)]
@@ -292,29 +91,10 @@ impl MdsProjection {
     }
 }
 
-/// Compute a pairwise distance matrix using sourmash.
-///
-/// When the `sourmash` feature is not enabled, this logs a warning
-/// and returns an error.
-#[allow(dead_code)]
-pub fn compute_distance_matrix(_genomes: &[PathBuf]) -> Result<Vec<Vec<f64>>> {
-    #[cfg(feature = "sourmash")]
-    {
-        compute_distance_matrix_sourmash(_genomes)
-    }
-    #[cfg(not(feature = "sourmash"))]
-    {
-        tracing::warn!("Sourmash feature not enabled. Install with --features sourmash for distance estimation.");
-        Err(crate::Error::Output(
-            "Sourmash not available. Enable the 'sourmash' feature or use FastANI instead.".to_string()
-        ))
-    }
-}
-
 /// Compute MDS projection from a distance matrix with provided labels.
 ///
 /// Uses classical MDS (metric MDS) to project genomes into 2D space
-/// for visualization.
+/// for visualization. Power iteration is used for eigendecomposition.
 pub fn compute_mds_with_labels(distances: &[Vec<f64>], labels: &[String]) -> Result<MdsProjection> {
     let n = distances.len();
     if n == 0 {
@@ -419,16 +199,6 @@ pub fn compute_mds(distances: &[Vec<f64>]) -> Result<MdsProjection> {
     compute_mds_with_labels(distances, &labels)
 }
 
-#[cfg(feature = "sourmash")]
-fn compute_distance_matrix_sourmash(genomes: &[PathBuf]) -> Result<Vec<Vec<f64>>> {
-    let runner = SourmashRunner::detect().ok_or_else(|| {
-        crate::Error::ExternalTool(
-            "sourmash not found. Install it with: pip install sourmash".to_string()
-        )
-    })?;
-    runner.compute_distance_matrix(genomes)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -487,58 +257,5 @@ mod tests {
         let content = std::fs::read_to_string(&path).unwrap();
         assert!(content.contains("PanMiner MDS Projection"));
         assert!(content.contains("d3.v7"));
-    }
-
-    #[test]
-    fn test_sourmash_runner_creation() {
-        let runner = SourmashRunner::new(PathBuf::from("/usr/bin/sourmash"));
-        assert_eq!(runner.path(), std::path::Path::new("/usr/bin/sourmash"));
-    }
-
-    #[test]
-    fn test_sourmash_detect() {
-        // This just tests that detect() doesn't panic
-        let _ = SourmashRunner::detect();
-    }
-
-    #[test]
-    fn test_parse_sourmash_compare() {
-        let temp_dir = tempfile::tempdir().unwrap();
-        let csv_path = temp_dir.path().join("compare.csv");
-        let csv_content = ",genome_0,genome_1,genome_2\n\
-                           genome_0,1.0,0.95,0.88\n\
-                           genome_1,0.95,1.0,0.91\n\
-                           genome_2,0.88,0.91,1.0\n";
-        std::fs::write(&csv_path, csv_content).unwrap();
-
-        let genomes: Vec<PathBuf> = vec![
-            PathBuf::from("genome_0.fasta"),
-            PathBuf::from("genome_1.fasta"),
-            PathBuf::from("genome_2.fasta"),
-        ];
-
-        let matrix = parse_sourmash_compare(&csv_path, &genomes).unwrap();
-
-        // Diagonal should be 0
-        assert!((matrix[0][0]).abs() < 0.001);
-        assert!((matrix[1][1]).abs() < 0.001);
-        assert!((matrix[2][2]).abs() < 0.001);
-
-        // genome_0 vs genome_1: distance = 1 - 0.95 = 0.05
-        assert!((matrix[0][1] - 0.05).abs() < 0.001);
-        assert!((matrix[1][0] - 0.05).abs() < 0.001);
-
-        // genome_0 vs genome_2: distance = 1 - 0.88 = 0.12
-        assert!((matrix[0][2] - 0.12).abs() < 0.001);
-    }
-
-    #[test]
-    fn test_compute_distance_matrix_no_sourmash() {
-        // When sourmash feature is not enabled, should return an error
-        #[cfg(not(feature = "sourmash"))]
-        {
-            let result = compute_distance_matrix(&[]);
-            assert!(result.is_err());
-        }
     }
 }

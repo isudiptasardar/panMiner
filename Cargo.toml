@@ -73,9 +73,6 @@ simdutf8 = "0.1"
 # Random sampling (for accumulation curves)
 rand = "0.8"
 
-# Sourmash (optional, for genome distance estimation)
-sourmash = { version = "0.15", optional = true }
-
 # GGCAT colored cDBG (optional, for DBG pipeline mode)
 ggcat-api = { git = "https://github.com/algbio/ggcat", branch = "main", optional = true }
 
@@ -91,9 +88,8 @@ mmseqs = []
 parquet = ["dep:parquet", "dep:arrow"]
 python = ["dep:pyo3"]
 viz = ["dep:tera"]
-sourmash = ["dep:sourmash"]
 dbg = ["dep:ggcat-api"]
-full = ["cpu", "mmseqs", "parquet", "viz", "sourmash", "dbg"]
+full = ["cpu", "mmseqs", "parquet", "viz", "dbg"]
 
 [profile.release]
 opt-level = 3

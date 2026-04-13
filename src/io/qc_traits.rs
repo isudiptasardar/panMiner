@@ -2,8 +2,7 @@
 //!
 //! Provides traits for running pre-processing QC tools:
 //! - CheckM2: Assembly completeness and contamination scoring
-//! - FastANI: Pairwise ANI for species boundary detection
-//! - Sourmash: MinHash-based distance estimation (optional feature)
+//! - skani: Sparse k-mer chaining ANI for distance estimation
 
 use crate::error::{Error, Result};
 use std::path::PathBuf;
@@ -56,10 +55,6 @@ pub struct GenomeDistance {
 pub enum DistanceMethod {
     /// skani sparse k-mer chaining (fast, robust for MAGs)
     Skani,
-    /// FastANI subprocess
-    FastANI,
-    /// Sourmash MinHash sketches
-    Sourmash,
     /// No distance tool available
     None,
 }
@@ -68,8 +63,6 @@ impl std::fmt::Display for DistanceMethod {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             DistanceMethod::Skani => write!(f, "skani"),
-            DistanceMethod::FastANI => write!(f, "FastANI"),
-            DistanceMethod::Sourmash => write!(f, "sourmash"),
             DistanceMethod::None => write!(f, "none"),
         }
     }
@@ -196,14 +189,13 @@ impl Default for CheckmQcRunner {
 impl CheckmQcRunner {
     /// Compute pairwise ANI/distance matrix for genomes.
     ///
-    /// Tries skani first (fastest, most robust for MAGs), then sourmash
-    /// (if feature enabled), then FastANI. Returns None if no distance
-    /// tool is available.
+    /// Uses skani (sparse k-mer chaining) for fast, robust distance estimation.
+    /// Returns None if skani is not installed.
     pub fn compute_distance_matrix(
         &self,
         genome_paths: &[PathBuf],
     ) -> Option<GenomeDistance> {
-        // Try skani first (fastest, most robust for incomplete/MAG genomes)
+        // Use skani (fast, robust for incomplete/MAG genomes)
         if let Some(runner) = crate::io::SkaniRunner::detect() {
             match runner.compute_ani_matrix_smart(genome_paths) {
                 Ok(matrix) => {
@@ -219,48 +211,12 @@ impl CheckmQcRunner {
                     });
                 }
                 Err(e) => {
-                    tracing::warn!("skani distance computation failed: {}. Trying next method.", e);
+                    tracing::warn!("skani distance computation failed: {}", e);
                 }
             }
         }
 
-        // Try sourmash (if feature enabled)
-        #[cfg(feature = "sourmash")]
-        {
-            if let Ok(matrix) = crate::io::compute_distance_matrix(genome_paths) {
-                let names: Vec<String> = genome_paths
-                    .iter()
-                    .filter_map(|p| p.file_stem().map(|s| s.to_string_lossy().to_string()))
-                    .collect();
-                return Some(GenomeDistance {
-                    genome_names: names,
-                    distance_matrix: matrix,
-                    method: DistanceMethod::Sourmash,
-                });
-            }
-        }
-
-        // Try FastANI
-        if let Some(runner) = crate::io::FastAniRunner::detect() {
-            match runner.compute_ani_matrix(genome_paths) {
-                Ok(matrix) => {
-                    let names: Vec<String> = genome_paths
-                        .iter()
-                        .filter_map(|p| p.file_stem().map(|s| s.to_string_lossy().to_string()))
-                        .collect();
-                    return Some(GenomeDistance {
-                        genome_names: names,
-                        distance_matrix: matrix,
-                        method: DistanceMethod::FastANI,
-                    });
-                }
-                Err(e) => {
-                    tracing::warn!("FastANI distance computation failed: {}", e);
-                }
-            }
-        }
-
-        tracing::warn!("No distance estimation tool available. Install skani, FastANI, or enable sourmash feature.");
+        tracing::warn!("No distance estimation tool available. Install skani: conda install -c bioconda skani");
         None
     }
 }

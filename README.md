@@ -27,7 +27,7 @@ A high-performance pangenome analysis tool written in Rust. PanMiner processes g
 
 ### Pre-processing & QC
 - **CheckM2 integration** — Assembly completeness and contamination scoring
-- **Distance estimation** — skani > sourmash > FastANI (cascading auto-detection)
+- **Distance estimation** — skani (sparse k-mer chaining, 50× faster than FastANI)
 - **MDS projection** — Pure Rust classical MDS for genome distance visualization
 - **QC visualization** — HTML report with d3.js MDS scatter + bar charts
 - **Bakta re-annotation** — Annotate raw genome assemblies before analysis
@@ -122,7 +122,7 @@ The installation script:
 All external tools are auto-detected. If a tool is not installed, its feature is gracefully skipped.
 
 ```bash
-# Distance estimation (priority: skani > sourmash > FastANI)
+# Distance estimation
 conda install -c bioconda skani
 
 # Clustering (GPU-accelerated)
@@ -334,13 +334,13 @@ panminer filter-pa -i results -o filtered_output
 
 ## Distance Estimation Priority
 
-PanMiner automatically detects available tools and uses the best one:
+PanMiner uses **skani** for distance estimation — the fastest and most robust ANI tool available.
 
-1. **skani** — 50× faster than FastANI, robust to incomplete genomes
-2. **sourmash** — MinHash sketching (requires `--features sourmash`)
-3. **FastANI** — Pairwise ANI (classic fallback)
+1. **skani** — 50× faster than FastANI, robust to incomplete genomes (MAGs)
 
-If no distance tool is installed, the QC distance step is skipped.
+Install: `conda install -c bioconda skani`
+
+If skani is not installed, the QC distance step is skipped.
 
 ## Output Files
 
@@ -442,9 +442,8 @@ src/
 │   ├── bakta.rs        # Bakta re-annotation runner
 │   ├── qc_traits.rs    # QC runner traits, GenomeQC, ANI dispatch
 │   ├── translate.rs    # DNA-to-protein translation
-│   ├── fastani.rs      # FastANI ANI subprocess
-│   ├── skani.rs        # skani ANI subprocess (highest priority)
-│   ├── sourmash.rs     # sourmash MinHash + MDS projection
+│   ├── skani.rs        # skani ANI subprocess (sole distance tool)
+│   ├── mds.rs          # Classical MDS projection (pure Rust)
 │   ├── ggcat.rs        # GGCAT colored cDBG (feature-gated)
 │   └── ggcaller.rs     # ggCaller gene calling subprocess
 │
@@ -502,7 +501,7 @@ src/
 | Language | Python | Rust |
 | Clustering | CD-HIT | MMseqs2 (GPU) + CPU fallback |
 | Graph | NetworkX | DashMap concurrent + petgraph |
-| Distance | Mash | skani > sourmash > FastANI |
+| Distance | Mash | skani (sparse k-mer chaining) |
 | I/O | Standard reads | Memory-mapped (mmap2) |
 | Memory | High (NetworkX) | Low (BitPackedMatrix 8× reduction) |
 | Streaming | No | Yes (chunked bincode+zstd) |
@@ -521,7 +520,6 @@ src/
 | `parquet` | Parquet output format support |
 | `python` | PyO3 Python bindings |
 | `viz` | HTML visualization output |
-| `sourmash` | Sourmash Rust API for distance estimation |
 | `dbg` | GGCAT cDBG pipeline mode |
 | `full` | All features enabled |
 

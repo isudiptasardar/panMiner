@@ -2,7 +2,7 @@
 //!
 //! This module provides memory-mapped file parsing for GFF3 and FASTA formats,
 //! compressed intermediate storage, streaming pipeline support, and QC tool
-//! integration (CheckM2, FastANI, sourmash).
+//! integration (CheckM2, skani).
 
 mod mmap;
 mod gff;
@@ -12,9 +12,8 @@ mod streaming;
 mod qc_traits;
 mod bakta;
 mod translate;
-mod fastani;
 mod skani;
-mod sourmash;
+mod mds;
 mod ggcat;
 mod ggcaller;
 mod subprocess;
@@ -27,11 +26,8 @@ pub use streaming::{StreamingPipeline, PartialGraph};
 pub use qc_traits::{GenomeQC, QcMode, QcRunner, CheckmQcRunner};
 pub use bakta::{BaktaRunner, BaktaDbType, is_gff_file, is_genbank_file, genbank_to_fasta};
 pub use translate::{translate, translate_with_stop};
-pub use fastani::FastAniRunner;
 pub use skani::SkaniRunner;
-pub use sourmash::{compute_mds, compute_mds_with_labels, MdsProjection, SourmashRunner};
-#[cfg(feature = "sourmash")]
-pub use sourmash::compute_distance_matrix;
+pub use mds::{compute_mds, compute_mds_with_labels, MdsProjection};
 pub use ggcat::{GGCATBuilder, CDBGGraph, CDBGStats, compute_cdbg_stats};
 pub use ggcaller::{GGCallerRunner, GGCallerOutput};
 pub use subprocess::run_with_timeout;

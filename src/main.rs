@@ -422,7 +422,7 @@ fn main() -> anyhow::Result<()> {
                         None
                     }
                 } else {
-                    tracing::warn!("No distance tool available. Install FastANI or enable sourmash feature.");
+                    tracing::warn!("No distance tool available. Install skani: conda install -c bioconda skani");
                     None
                 }
             } else {

@@ -11,10 +11,8 @@ dependencies:
   # Core clustering (GPU-accelerated; falls back to built-in CPU if absent)
   - mmseqs2
 
-  # Distance estimation (skani preferred; FastANI and sourmash as fallbacks)
-  - skani        # Sparse k-mer chaining ANI (50x faster than FastANI, robust to MAGs)
-  - fastani      # Fallback pairwise ANI
-  # sourmash is installed via pip (below) for MinHash + MDS
+  # Distance estimation
+  - skani        # Sparse k-mer chaining ANI (fast, robust to MAGs)
 
   # Optional: Genome re-annotation
   - bakta
@@ -52,4 +50,3 @@ dependencies:
   - pip
   - pip:
     - bmge       # BMGE entropy-based alignment filtering (Biopython-dependent)
-    - sourmash   # MinHash distance estimation + compare
