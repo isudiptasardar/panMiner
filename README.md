@@ -63,13 +63,19 @@ A high-performance pangenome analysis tool written in Rust. PanMiner processes g
 - **Error on feature absence** — cDBG mode returns `Error::FeatureNotEnabled` instead of silently continuing
 - **cDBG pipeline mode** — GGCAT + ggCaller for de novo gene calling
 
+## Supported Platforms
+
+**Linux** and **macOS** are the primary supported platforms. This aligns with the bioinformatics ecosystem — MMseqs2, CD-HIT, Bakta, CheckM2, skani, and other external tools are available via conda on Linux/macOS only.
+
+Windows users should use **WSL2** (Windows Subsystem for Linux) or run PanMiner on a Linux server/HPC cluster.
+
 ## Installation
 
 ### Prerequisites
 
 - **Rust 1.70+** — [Install via rustup](https://rustup.rs)
-- **MMseqs2** (optional) — For GPU-accelerated clustering
-- **skani** (optional) — For fast, robust ANI distance estimation
+- **MMseqs2** (optional) — For GPU-accelerated clustering (`conda install -c bioconda mmseqs2`)
+- **skani** (optional) — For fast, robust ANI distance estimation (`conda install -c bioconda skani`)
 - **Bakta** (optional) — For re-annotation of raw genome assemblies
 - **CheckM2** (optional) — For pre-processing quality control
 - **MAFFT/Clustal/PRANK** (optional) — For multiple sequence alignment

@@ -1,6 +1,11 @@
 # Build artifacts
 target/
 
+# Test data and output
+test_gff3/
+test_cdbg_no_feature/
+test_output*/
+
 # Documentation and reference (local only, not for distribution)
 CLAUDE.md
 Comparison.md
