@@ -4,7 +4,7 @@ use rayon::prelude::*;
 use std::collections::{HashMap, HashSet};
 
 use super::concurrent::ConcurrentGraph;
-use super::types::{ClusterId, Gene, GeneCluster, GenomeId, Node, PangenomeGraph};
+use super::types::{ClusterId, Gene, GeneCluster, GeneId, GenomeId, Node, PangenomeGraph};
 
 
 /// Builder for constructing pangenome graphs from gene clusters.
@@ -59,6 +59,11 @@ impl GraphBuilder {
                     (gene_id.to_string(), cluster.id.clone())
                 })
             })
+            .collect();
+
+        // Build gene data map for populating gene_members on nodes
+        let gene_data_map: HashMap<GeneId, Gene> = genes.iter()
+            .map(|g| (g.id.clone(), g.clone()))
             .collect();
 
         let gene_to_genome: HashMap<String, GenomeId> = genes
@@ -119,7 +124,7 @@ impl GraphBuilder {
 
         // Add nodes from clusters (parallel)
         clusters.par_iter().for_each(|cluster| {
-            let mut node = Node::from_cluster(cluster);
+            let mut node = Node::from_cluster_with_genes(cluster, &gene_data_map);
             for gene_id in &cluster.genes {
                 if let Some(genome_id) = gene_to_genome.get(gene_id.as_str()) {
                     node.genomes.insert(genome_id.clone());
@@ -186,7 +191,14 @@ impl GraphBuilder {
         genes: &[Gene],
     ) -> PangenomeGraph {
         let concurrent = self.build_concurrent(clusters, genes);
-        concurrent.to_standard()
+        let mut graph = concurrent.to_standard();
+
+        // Populate gene lookup for output writers
+        for gene in genes {
+            graph.gene_lookup.insert(gene.id.clone(), gene.clone());
+        }
+
+        graph
     }
 
     /// Build a graph from pre-extracted adjacencies.

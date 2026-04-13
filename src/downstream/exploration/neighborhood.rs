@@ -84,6 +84,7 @@ impl GeneNeighborhoodExtractor {
                     hop_distance,
                     num_genomes: node.genomes.len(),
                     is_paralog: node.is_paralog,
+                    is_highly_variable: node.is_highly_variable,
                 });
             }
         }
@@ -134,6 +135,8 @@ pub struct NeighborhoodNode {
     pub num_genomes: usize,
     /// Whether this is a paralog cluster
     pub is_paralog: bool,
+    /// Whether this is a highly variable gene cluster
+    pub is_highly_variable: bool,
 }
 
 /// Result of neighborhood extraction.
@@ -155,15 +158,18 @@ impl DownstreamResult for NeighborhoodResult {
         // Write neighborhood_genes.csv
         let csv_path = dir.join("neighborhood_genes.csv");
         let mut wtr = csv::Writer::from_path(&csv_path)?;
-        wtr.write_record(&["cluster_id", "support", "annotation", "hop_distance", "num_genomes", "is_paralog"])?;
+        wtr.write_record(&["cluster_id", "support", "annotation", "hop_distance", "num_genomes", "is_paralog", "is_highly_variable"])?;
         for node in &self.visited_nodes {
+            let paralog_str = if node.is_paralog { "true" } else { "false" };
+            let hv_str = if node.is_highly_variable { "true" } else { "false" };
             wtr.write_record(&[
-                &node.cluster_id,
+                node.cluster_id.as_str(),
                 &node.support.to_string(),
                 node.annotation.as_deref().unwrap_or(""),
                 &node.hop_distance.to_string(),
                 &node.num_genomes.to_string(),
-                if node.is_paralog { "true" } else { "false" }.to_string().as_str(),
+                paralog_str,
+                hv_str,
             ])?;
         }
         wtr.flush()?;
@@ -251,6 +257,10 @@ fn parse_gml_graph(path: &Path) -> Result<PangenomeGraph> {
                 } else if line.starts_with("is_paralog") {
                     if let Some(s) = line.split_whitespace().nth(1) {
                         node.is_paralog = s == "1";
+                    }
+                } else if line.starts_with("is_highly_variable") {
+                    if let Some(s) = line.split_whitespace().nth(1) {
+                        node.is_highly_variable = s == "1";
                     }
                 } else if line.starts_with("annotation") {
                     if let Some(ann) = line.split('"').nth(1) {
@@ -370,6 +380,7 @@ fn write_neighborhood_gml(
         writeln!(&mut file, "    label \"{}\"", node.cluster_id)?;
         writeln!(&mut file, "    support {}", node.support)?;
         writeln!(&mut file, "    is_paralog {}", if node.is_paralog { 1 } else { 0 })?;
+        writeln!(&mut file, "    is_highly_variable {}", if node.is_highly_variable { 1 } else { 0 })?;
         writeln!(&mut file, "    hop_distance {}", node.hop_distance)?;
         writeln!(&mut file, "    num_genomes {}", node.num_genomes)?;
         if let Some(ref ann) = node.annotation {
@@ -393,6 +404,7 @@ fn write_neighborhood_gml(
 }
 
 /// Escape a string for GML format.
+#[allow(dead_code)]
 fn escape_gml(s: &str) -> String {
     s.replace('\\', "\\\\").replace('"', "\\\"")
 }
@@ -494,6 +506,7 @@ mod tests {
                     hop_distance: 0,
                     num_genomes: 2,
                     is_paralog: false,
+                    is_highly_variable: false,
                 },
             ],
             edges: vec![("c1".to_string(), "c2".to_string())],

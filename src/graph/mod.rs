@@ -13,6 +13,7 @@ mod matrix;
 mod builder;
 mod structural_variants;
 mod merge;
+mod highly_variable;
 
 pub use types::{Gene, GeneId, GenomeId, Sequence, Strand, Node, Edge, EdgeKey};
 pub use types::{GeneCluster, ClusterId, PangenomeGraph, GenomeMetadata};
@@ -21,3 +22,4 @@ pub use matrix::BitPackedMatrix;
 pub use builder::GraphBuilder;
 pub use structural_variants::{StructuralVariantDetector, StructuralVariant, VariantType};
 pub use merge::{merge_pangenomes, MergeResult};
+pub use highly_variable::{HighlyVariableDetector, HighlyVariableResult};

@@ -11,8 +11,10 @@ use crate::error::Result;
 use crate::graph::{PangenomeGraph, BitPackedMatrix};
 
 /// HTML visualization writer.
+#[allow(dead_code)]
 pub struct HtmlVizWriter;
 
+#[allow(dead_code)]
 impl HtmlVizWriter {
     /// Create a new HTML visualization writer.
     pub fn new() -> Self {
@@ -228,6 +230,7 @@ impl HtmlVizWriter {
                 "genes": gene_estimate,
                 "genomes": genomes,
                 "isParalog": node.is_paralog,
+                "isHighlyVariable": node.is_highly_variable,
                 "isCore": is_core,
                 "x": null,
                 "y": null

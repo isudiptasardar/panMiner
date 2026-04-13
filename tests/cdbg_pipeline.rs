@@ -82,3 +82,29 @@ fn test_ggcat_build_failed_error() {
     let err = Error::ggcat_build_failed("out of memory");
     assert!(err.to_string().contains("GGCAT cDBG build failed"));
 }
+
+#[test]
+fn test_dbg_mode_errors_without_feature() {
+    // When the dbg feature is not enabled, running the pipeline with
+    // PipelineMode::Dbg should return FeatureNotEnabled, not silently continue.
+    #[cfg(not(feature = "dbg"))]
+    {
+        use panminer::pipeline::PanminerPipeline;
+        use std::path::PathBuf;
+
+        let config = PanminerConfig::new()
+            .with_input_files(vec![PathBuf::from("nonexistent.gff")])
+            .with_output_dir(PathBuf::from("test_cdbg_no_feature"))
+            .with_pipeline_mode(PipelineMode::Dbg);
+
+        let pipeline = PanminerPipeline::new(config);
+        let result = pipeline.run();
+        assert!(result.is_err());
+        let msg = result.unwrap_err().to_string();
+        assert!(
+            msg.contains("dbg") || msg.contains("feature"),
+            "Expected feature-related error, got: {}",
+            msg
+        );
+    }
+}

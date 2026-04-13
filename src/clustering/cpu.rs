@@ -20,7 +20,9 @@ impl CpuClusterer {
     }
 
     /// Compute sequence identity between two sequences.
-    /// TODO: Use actual SIMD intrinsics when available for better performance.
+    ///
+    /// Uses naive byte-by-byte comparison. For large-scale clustering,
+    /// MMseqs2-GPU or SIMD-accelerated paths should be preferred.
     pub fn sequence_identity(a: &[u8], b: &[u8]) -> f32 {
     let min_len = a.len().min(b.len());
     if min_len == 0 {

@@ -109,6 +109,7 @@ impl OutputWriter {
             struct_csv: None,
             sv_matrix: None,
             summary_stats: None,
+            pre_filt_graph: None,
             #[cfg(feature = "parquet")]
             parquet: None,
             #[cfg(feature = "viz")]
@@ -299,7 +300,7 @@ impl OutputWriter {
 
         // Always write summary statistics
         let summary_path = self.output_dir.join("summary_statistics.txt");
-        write_summary_stats(matrix, &summary_path)?;
+        write_summary_stats(matrix, &summary_path, Some(graph))?;
         paths.summary_stats = Some(summary_path);
         tracing::info!("Wrote summary statistics");
 
@@ -344,6 +345,8 @@ pub struct OutputPaths {
     pub sv_matrix: Option<PathBuf>,
     /// Summary statistics file
     pub summary_stats: Option<PathBuf>,
+    /// Pre-filtered graph (written before correction)
+    pub pre_filt_graph: Option<PathBuf>,
     /// Parquet output files
     #[cfg(feature = "parquet")]
     pub parquet: Option<PathBuf>,

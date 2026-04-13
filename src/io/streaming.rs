@@ -105,3 +105,83 @@ impl StreamingPipeline {
         bincode::deserialize(&compressed).map_err(|e| Error::Output(e.to_string()))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::PathBuf;
+
+    #[test]
+    fn test_streaming_pipeline_creation() {
+        let config = PanminerConfig::new()
+            .with_input_files(vec![PathBuf::from("test.gff")])
+            .with_output_dir(PathBuf::from("test_output"));
+        let pipeline = StreamingPipeline::new(config);
+        assert_eq!(pipeline.chunk_size, 100); // default chunk_size
+    }
+
+    #[test]
+    fn test_streaming_pipeline_custom_chunk_size() {
+        let config = PanminerConfig::new()
+            .with_input_files(vec![PathBuf::from("test.gff")])
+            .with_output_dir(PathBuf::from("test_output"))
+            .with_chunk_size(50);
+        let pipeline = StreamingPipeline::new(config);
+        assert_eq!(pipeline.chunk_size, 50);
+    }
+
+    #[test]
+    fn test_partial_graph_serialization() {
+        let partial = PartialGraph {
+            chunk_id: 0,
+            adjacencies: vec![
+                ("contig1".to_string(), "cluster_A".to_string(), "cluster_B".to_string()),
+                ("contig1".to_string(), "cluster_B".to_string(), "cluster_C".to_string()),
+            ],
+            genome_ids: vec!["genome1".to_string(), "genome2".to_string()],
+        };
+
+        let serialized = bincode::serialize(&partial).unwrap();
+        let deserialized: PartialGraph = bincode::deserialize(&serialized).unwrap();
+        assert_eq!(deserialized.chunk_id, 0);
+        assert_eq!(deserialized.adjacencies.len(), 2);
+        assert_eq!(deserialized.genome_ids.len(), 2);
+    }
+
+    #[test]
+    fn test_partial_graph_empty() {
+        let partial = PartialGraph {
+            chunk_id: 1,
+            adjacencies: vec![],
+            genome_ids: vec![],
+        };
+
+        let serialized = bincode::serialize(&partial).unwrap();
+        let deserialized: PartialGraph = bincode::deserialize(&serialized).unwrap();
+        assert_eq!(deserialized.chunk_id, 1);
+        assert!(deserialized.adjacencies.is_empty());
+        assert!(deserialized.genome_ids.is_empty());
+    }
+
+    #[test]
+    fn test_partial_graph_round_trip_compressed() {
+        let dir = tempfile::tempdir().unwrap();
+        let partial = PartialGraph {
+            chunk_id: 42,
+            adjacencies: vec![
+                ("contig1".to_string(), "A".to_string(), "B".to_string()),
+            ],
+            genome_ids: vec!["g1".to_string()],
+        };
+
+        let path = dir.path().join("chunk_42.zst");
+        let serialized = bincode::serialize(&partial).unwrap();
+        write_compressed(&path, &serialized).unwrap();
+
+        let compressed = read_compressed(&path).unwrap();
+        let deserialized: PartialGraph = bincode::deserialize(&compressed).unwrap();
+        assert_eq!(deserialized.chunk_id, 42);
+        assert_eq!(deserialized.adjacencies.len(), 1);
+        assert_eq!(deserialized.genome_ids[0], "g1");
+    }
+}

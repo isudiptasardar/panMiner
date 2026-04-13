@@ -32,6 +32,7 @@ impl GmlWriter {
             writeln!(writer, "    label \"{}\"", node.cluster_id)?;
             writeln!(writer, "    support {}", node.support)?;
             writeln!(writer, "    is_paralog {}", if node.is_paralog { 1 } else { 0 })?;
+            writeln!(writer, "    is_highly_variable {}", if node.is_highly_variable { 1 } else { 0 })?;
 
             // Length of centroid sequence
             let length = node.centroid_sequence.as_ref().map(|s| s.len()).unwrap_or(0);

@@ -17,6 +17,7 @@ mod skani;
 mod sourmash;
 mod ggcat;
 mod ggcaller;
+mod subprocess;
 
 pub use mmap::MmapFile;
 pub use gff::GffParser;
@@ -33,3 +34,4 @@ pub use sourmash::{compute_mds, compute_mds_with_labels, MdsProjection, Sourmash
 pub use sourmash::compute_distance_matrix;
 pub use ggcat::{GGCATBuilder, CDBGGraph, CDBGStats, compute_cdbg_stats};
 pub use ggcaller::{GGCallerRunner, GGCallerOutput};
+pub use subprocess::run_with_timeout;

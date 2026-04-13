@@ -41,7 +41,7 @@ impl AccumulationCurveRunner {
     }
 
     /// Generate evenly spaced genome counts from 1 to n.
-    fn rarefactionKs(&self, n: usize) -> Vec<usize> {
+    fn rarefaction_ks(&self, n: usize) -> Vec<usize> {
         if self.rarefaction_points == 0 {
             return vec![];
         }
@@ -59,32 +59,32 @@ impl AccumulationCurveRunner {
     }
 
     /// Count genes present in the given sampled genomes.
-    fn countGenes(&self, matrix: &BitPackedMatrix, genomeIndices: &[usize]) -> (usize, usize) {
-        let k = genomeIndices.len();
-        let totalGenes = matrix.num_clusters();
-        let mut presentCount = 0usize;
-        let mut coreCount = 0usize;
+    fn count_genes(&self, matrix: &BitPackedMatrix, genome_indices: &[usize]) -> (usize, usize) {
+        let k = genome_indices.len();
+        let total_genes = matrix.num_clusters();
+        let mut present_count = 0usize;
+        let mut core_count = 0usize;
 
-        for clusterIdx in 0..totalGenes {
+        for cluster_idx in 0..total_genes {
             // Count how many of the sampled genomes have this cluster
-            let count = genomeIndices
+            let count = genome_indices
                 .iter()
-                .filter(|&&g| matrix.get(g, clusterIdx))
+                .filter(|&&g| matrix.get(g, cluster_idx))
                 .count();
             if count > 0 {
-                presentCount += 1;
+                present_count += 1;
             }
             // Core gene: present in ALL sampled genomes
             if count == k {
-                coreCount += 1;
+                core_count += 1;
             }
         }
 
-        (presentCount, coreCount)
+        (present_count, core_count)
     }
 
     /// Run rarefaction analysis on an in-memory BitPackedMatrix.
-    fn runOnMatrix(&self, matrix: &BitPackedMatrix) -> AccumulationResult {
+    fn run_on_matrix(&self, matrix: &BitPackedMatrix) -> AccumulationResult {
         let n = matrix.num_genomes();
         if n == 0 {
             return AccumulationResult {
@@ -98,15 +98,15 @@ impl AccumulationCurveRunner {
             };
         }
 
-        let ks = self.rarefactionKs(n);
+        let ks = self.rarefaction_ks(n);
         let mut curve_data = Vec::with_capacity(ks.len());
 
         // Fixed seed for reproducibility
         let mut rng = rand::rngs::StdRng::seed_from_u64(42);
 
         for &k in &ks {
-            let mut totalGenes = Vec::with_capacity(self.num_samples);
-            let mut coreGenes = Vec::with_capacity(self.num_samples);
+            let mut total_genes = Vec::with_capacity(self.num_samples);
+            let mut core_genes = Vec::with_capacity(self.num_samples);
 
             for _ in 0..self.num_samples {
                 // Sample k genomes without replacement
@@ -115,20 +115,20 @@ impl AccumulationCurveRunner {
                 indices.truncate(k);
                 indices.sort();
 
-                let (present, core) = self.countGenes(matrix, &indices);
-                totalGenes.push(present as f64);
-                coreGenes.push(core as f64);
+                let (present, core) = self.count_genes(matrix, &indices);
+                total_genes.push(present as f64);
+                core_genes.push(core as f64);
             }
 
-            let meanTotal = totalGenes.iter().sum::<f64>() / self.num_samples as f64;
-            let meanCore = coreGenes.iter().sum::<f64>() / self.num_samples as f64;
-            let meanAccessory = meanTotal - meanCore;
+            let mean_total = total_genes.iter().sum::<f64>() / self.num_samples as f64;
+            let mean_core = core_genes.iter().sum::<f64>() / self.num_samples as f64;
+            let mean_accessory = mean_total - mean_core;
 
             // Standard error
-            let variance = totalGenes
+            let variance = total_genes
                 .iter()
                 .map(|&x| {
-                    let diff = x - meanTotal;
+                    let diff = x - mean_total;
                     diff * diff
                 })
                 .sum::<f64>()
@@ -141,14 +141,14 @@ impl AccumulationCurveRunner {
 
             curve_data.push(AccumulationPoint {
                 k,
-                mean_total: meanTotal,
-                mean_core: meanCore,
-                mean_accessory: meanAccessory,
+                mean_total,
+                mean_core,
+                mean_accessory,
                 stderr,
             });
         }
 
-        let heaps_law = self.fitHeapsLaw(&curve_data);
+        let heaps_law = self.fit_heaps_law(&curve_data);
 
         AccumulationResult {
             curve_data,
@@ -157,8 +157,8 @@ impl AccumulationCurveRunner {
     }
 
     /// Fit Heaps' law via linear regression on log-transformed data.
-    fn fitHeapsLaw(&self, curveData: &[AccumulationPoint]) -> HeapsLawFit {
-        if curveData.is_empty() || curveData.len() < 2 {
+    fn fit_heaps_law(&self, curve_data: &[AccumulationPoint]) -> HeapsLawFit {
+        if curve_data.is_empty() || curve_data.len() < 2 {
             return HeapsLawFit {
                 alpha: 0.0,
                 a_coefficient: 0.0,
@@ -168,7 +168,7 @@ impl AccumulationCurveRunner {
         }
 
         // Filter out zero values for log transformation
-        let points: Vec<(f64, f64)> = curveData
+        let points: Vec<(f64, f64)> = curve_data
             .iter()
             .filter(|p| p.k > 0 && p.mean_total > 0.0)
             .map(|p| (p.k as f64, p.mean_total))
@@ -183,15 +183,15 @@ impl AccumulationCurveRunner {
             };
         }
 
-        let nPoints = points.len() as f64;
-        let sumLnK: f64 = points.iter().map(|(k, _)| k.ln()).sum();
-        let sumLnN: f64 = points.iter().map(|(_, n)| n.ln()).sum();
-        let sumLnKLnN: f64 = points.iter().map(|(k, n)| k.ln() * n.ln()).sum();
-        let sumLnKSq: f64 = points.iter().map(|(k, _)| k.ln() * k.ln()).sum();
+        let n_points = points.len() as f64;
+        let sum_ln_k: f64 = points.iter().map(|(k, _)| k.ln()).sum();
+        let sum_ln_n: f64 = points.iter().map(|(_, n)| n.ln()).sum();
+        let sum_ln_kln_n: f64 = points.iter().map(|(k, n)| k.ln() * n.ln()).sum();
+        let sum_ln_k_sq: f64 = points.iter().map(|(k, _)| k.ln() * k.ln()).sum();
 
         // Linear regression: ln(n) = alpha * ln(k) + ln(A)
         // slope = alpha, intercept = ln(A)
-        let denominator = nPoints * sumLnKSq - sumLnK * sumLnK;
+        let denominator = n_points * sum_ln_k_sq - sum_ln_k * sum_ln_k;
         if denominator.abs() < 1e-10 {
             return HeapsLawFit {
                 alpha: 0.0,
@@ -201,24 +201,24 @@ impl AccumulationCurveRunner {
             };
         }
 
-        let alpha = (nPoints * sumLnKLnN - sumLnK * sumLnN) / denominator;
-        let intercept = (sumLnN - alpha * sumLnK) / nPoints;
-        let aCoefficient = intercept.exp();
+        let alpha = (n_points * sum_ln_kln_n - sum_ln_k * sum_ln_n) / denominator;
+        let intercept = (sum_ln_n - alpha * sum_ln_k) / n_points;
+        let a_coefficient = intercept.exp();
 
         // R-squared
-        let meanLnN = sumLnN / nPoints;
-        let ssTot: f64 = points.iter().map(|(_, n)| {
-            let diff = n.ln() - meanLnN;
+        let mean_ln_n = sum_ln_n / n_points;
+        let ss_tot: f64 = points.iter().map(|(_, n)| {
+            let diff = n.ln() - mean_ln_n;
             diff * diff
         }).sum();
-        let ssRes: f64 = points.iter().map(|(k, n)| {
+        let ss_res: f64 = points.iter().map(|(k, n)| {
             let predicted = alpha * k.ln() + intercept;
             let diff = n.ln() - predicted;
             diff * diff
         }).sum();
 
-        let rSquared = if ssTot.abs() > 1e-10 {
-            1.0 - ssRes / ssTot
+        let r_squared = if ss_tot.abs() > 1e-10 {
+            1.0 - ss_res / ss_tot
         } else {
             0.0
         };
@@ -231,38 +231,38 @@ impl AccumulationCurveRunner {
 
         HeapsLawFit {
             alpha,
-            a_coefficient: aCoefficient,
-            r_squared: rSquared,
+            a_coefficient,
+            r_squared,
             classification,
         }
     }
 
     /// Parse a gene_presence_absence.csv file into a BitPackedMatrix.
-    fn parseCsvToMatrix(csvPath: &Path) -> Result<BitPackedMatrix> {
-        let mut reader = csv::Reader::from_path(csvPath)?;
+    fn parse_csv_to_matrix(csv_path: &Path) -> Result<BitPackedMatrix> {
+        let mut reader = csv::Reader::from_path(csv_path)?;
         let headers = reader.headers()?.clone();
 
         // First column is "Gene", rest are genome names
-        let genomeNames: Vec<String> = headers.iter().skip(1).map(|s| s.to_string()).collect();
-        let numGenomes = genomeNames.len();
+        let genome_names: Vec<String> = headers.iter().skip(1).map(|s| s.to_string()).collect();
+        let num_genomes = genome_names.len();
 
         // Collect all records first to know cluster count
         let records: Vec<csv::StringRecord> = reader.records().filter_map(|r| r.ok()).collect();
-        let numClusters = records.len();
+        let num_clusters = records.len();
 
-        let mut matrix = BitPackedMatrix::new(numGenomes, numClusters);
-        matrix.set_genome_names(genomeNames);
+        let mut matrix = BitPackedMatrix::new(num_genomes, num_clusters);
+        matrix.set_genome_names(genome_names);
 
-        let clusterIds: Vec<String> = records
+        let cluster_ids: Vec<String> = records
             .iter()
             .map(|r| r.get(0).unwrap_or("").to_string())
             .collect();
-        matrix.set_cluster_ids(clusterIds);
+        matrix.set_cluster_ids(cluster_ids);
 
-        for (clusterIdx, record) in records.iter().enumerate() {
-            for (genomeIdx, val) in record.iter().enumerate().skip(1) {
+        for (cluster_idx, record) in records.iter().enumerate() {
+            for (genome_idx, val) in record.iter().enumerate().skip(1) {
                 let present = val == "1" || val.eq_ignore_ascii_case("TRUE");
-                matrix.set(genomeIdx - 1, clusterIdx, present);
+                matrix.set(genome_idx - 1, cluster_idx, present);
             }
         }
 
@@ -280,9 +280,9 @@ impl DownstreamRunner for AccumulationCurveRunner {
     type Output = AccumulationResult;
 
     fn run(&self, output_dir: &Path) -> Result<Self::Output> {
-        let csvPath = output_dir.join("gene_presence_absence.csv");
-        let matrix = Self::parseCsvToMatrix(&csvPath)?;
-        Ok(self.runOnMatrix(&matrix))
+        let csv_path = output_dir.join("gene_presence_absence.csv");
+        let matrix = Self::parse_csv_to_matrix(&csv_path)?;
+        Ok(self.run_on_matrix(&matrix))
     }
 
     fn name(&self) -> &str {
@@ -339,8 +339,8 @@ pub struct AccumulationResult {
 impl DownstreamResult for AccumulationResult {
     fn write_to(&self, dir: &Path) -> Result<()> {
         // Write accumulation_curve.csv
-        let curvePath = dir.join("accumulation_curve.csv");
-        let mut writer = csv::Writer::from_path(&curvePath)?;
+        let curve_path = dir.join("accumulation_curve.csv");
+        let mut writer = csv::Writer::from_path(&curve_path)?;
         writer.write_record(&[
             "k",
             "mean_total",
@@ -360,8 +360,8 @@ impl DownstreamResult for AccumulationResult {
         writer.flush()?;
 
         // Write heaps_law_fit.csv
-        let heapsPath = dir.join("heaps_law_fit.csv");
-        let mut writer = csv::Writer::from_path(&heapsPath)?;
+        let heaps_path = dir.join("heaps_law_fit.csv");
+        let mut writer = csv::Writer::from_path(&heaps_path)?;
         writer.write_record(&[
             "alpha",
             "A",
@@ -396,7 +396,7 @@ mod tests {
     use tempfile::TempDir;
 
     #[test]
-    fn testAccumulationCurveMonotoneIncreasing() {
+    fn test_accumulation_curve_monotone_increasing() {
         // 5 genomes, each with 10 unique genes (no overlap)
         // This creates a fully open pangenome where each new genome adds 10 genes
         let mut matrix = BitPackedMatrix::new(5, 50);
@@ -413,8 +413,8 @@ mod tests {
         // g1: genes 0-9, g2: genes 10-19, g3: genes 20-29, g4: genes 30-39, g5: genes 40-49
         for g in 0..5 {
             for c in 0..10 {
-                let clusterIdx = g * 10 + c;
-                matrix.set(g, clusterIdx, true);
+                let cluster_idx = g * 10 + c;
+                matrix.set(g, cluster_idx, true);
             }
         }
 
@@ -422,7 +422,7 @@ mod tests {
             .with_num_samples(10)
             .with_rarefaction_points(5);
 
-        let result = runner.runOnMatrix(&matrix);
+        let result = runner.run_on_matrix(&matrix);
 
         // Total genes should monotonically increase as k increases
         for i in 1..result.curve_data.len() {
@@ -437,24 +437,24 @@ mod tests {
         }
 
         // With 5 unique genomes and 10 genes each, total at k=5 should be 50
-        let lastPoint = result.curve_data.last().unwrap();
-        assert!((lastPoint.mean_total - 50.0).abs() < 1.0,
+        let last_point = result.curve_data.last().unwrap();
+        assert!((last_point.mean_total - 50.0).abs() < 1.0,
             "At k=5 with 5 unique genomes x 10 genes each, total should be ~50, got {}",
-            lastPoint.mean_total);
+            last_point.mean_total);
     }
 
     #[test]
-    fn testHeapsLawClosedPangenome() {
+    fn test_heaps_law_closed_pangenome() {
         // 10 genomes, all share the same 100 core genes (closed pangenome)
         let n = 10;
-        let numClusters = 100;
-        let mut matrix = BitPackedMatrix::new(n, numClusters);
+        let num_clusters = 100;
+        let mut matrix = BitPackedMatrix::new(n, num_clusters);
         matrix.set_genome_names((0..n).map(|i| format!("g{}", i)).collect());
-        matrix.set_cluster_ids((0..numClusters).map(|i| format!("gene_{}", i)).collect());
+        matrix.set_cluster_ids((0..num_clusters).map(|i| format!("gene_{}", i)).collect());
 
         // All genes are core (present in all genomes)
         for g in 0..n {
-            for c in 0..numClusters {
+            for c in 0..num_clusters {
                 matrix.set(g, c, true);
             }
         }
@@ -463,7 +463,7 @@ mod tests {
             .with_num_samples(20)
             .with_rarefaction_points(10);
 
-        let result = runner.runOnMatrix(&matrix);
+        let result = runner.run_on_matrix(&matrix);
 
         // Closed pangenome: alpha should be < 1.0
         assert!(
@@ -478,22 +478,22 @@ mod tests {
     }
 
     #[test]
-    fn testHeapsLawOpenPangenome() {
+    fn test_heaps_law_open_pangenome() {
         // Open pangenome: each new genome adds new genes (power law growth)
         // Simulate by having gene frequency decrease exponentially
         let n = 20;
-        let numClusters = 200;
-        let mut matrix = BitPackedMatrix::new(n, numClusters);
+        let num_clusters = 200;
+        let mut matrix = BitPackedMatrix::new(n, num_clusters);
         matrix.set_genome_names((0..n).map(|i| format!("g{}", i)).collect());
-        matrix.set_cluster_ids((0..numClusters).map(|i| format!("gene_{}", i)).collect());
+        matrix.set_cluster_ids((0..num_clusters).map(|i| format!("gene_{}", i)).collect());
 
         // Each gene cluster is present in roughly half the genomes (accessory)
         // This creates a power-law-like distribution typical of open pangenomes
-        for c in 0..numClusters {
+        for c in 0..num_clusters {
             for g in 0..n {
                 // Probability of presence decreases with cluster index
                 // Later clusters are rarer (present in fewer genomes)
-                let prob = 1.0 - (c as f64 / numClusters as f64) * 0.95;
+                let prob = 1.0 - (c as f64 / num_clusters as f64) * 0.95;
                 if (g as f64 / n as f64) < prob {
                     matrix.set(g, c, true);
                 }
@@ -504,7 +504,7 @@ mod tests {
             .with_num_samples(50)
             .with_rarefaction_points(15);
 
-        let result = runner.runOnMatrix(&matrix);
+        let result = runner.run_on_matrix(&matrix);
 
         // For this distribution, alpha should be >= 1.0 (open pangenome)
         // Note: depending on the exact distribution, result may vary
@@ -518,28 +518,28 @@ mod tests {
     }
 
     #[test]
-    fn testRarefactionKs() {
+    fn test_rarefaction_ks() {
         let runner = AccumulationCurveRunner::new();
 
         // When rarefaction_points >= n, return all values 1..=n
-        let ks = runner.rarefactionKs(5);
+        let ks = runner.rarefaction_ks(5);
         assert_eq!(ks, vec![1, 2, 3, 4, 5]);
 
         // When rarefaction_points == 0
         let runner = AccumulationCurveRunner::new().with_rarefaction_points(0);
-        let ks = runner.rarefactionKs(10);
+        let ks = runner.rarefaction_ks(10);
         assert!(ks.is_empty());
 
         // Even spacing for 20 points from 1 to 100
         let runner = AccumulationCurveRunner::new().with_rarefaction_points(20);
-        let ks = runner.rarefactionKs(100);
+        let ks = runner.rarefaction_ks(100);
         assert_eq!(ks.len(), 20);
         assert_eq!(ks[0], 1);
         assert_eq!(ks[19], 100);
     }
 
     #[test]
-    fn testAccumulationResultWriteTo() {
+    fn test_accumulation_result_write_to() {
         let result = AccumulationResult {
             curve_data: vec![
                 AccumulationPoint {
@@ -565,21 +565,21 @@ mod tests {
             },
         };
 
-        let tempDir = TempDir::new().unwrap();
-        result.write_to(tempDir.path()).unwrap();
+        let temp_dir = TempDir::new().unwrap();
+        result.write_to(temp_dir.path()).unwrap();
 
         // Check accumulation_curve.csv
-        let curvePath = tempDir.path().join("accumulation_curve.csv");
-        let curveContent = std::fs::read_to_string(&curvePath).unwrap();
-        assert!(curveContent.contains("k,mean_total,mean_core,mean_accessory,stderr"));
-        assert!(curveContent.contains("1,10.0000,10.0000,0.0000,0.0000"));
-        assert!(curveContent.contains("5,50.0000,10.0000,40.0000,2.0000"));
+        let curve_path = temp_dir.path().join("accumulation_curve.csv");
+        let curve_content = std::fs::read_to_string(&curve_path).unwrap();
+        assert!(curve_content.contains("k,mean_total,mean_core,mean_accessory,stderr"));
+        assert!(curve_content.contains("1,10.0000,10.0000,0.0000,0.0000"));
+        assert!(curve_content.contains("5,50.0000,10.0000,40.0000,2.0000"));
 
         // Check heaps_law_fit.csv
-        let heapsPath = tempDir.path().join("heaps_law_fit.csv");
-        let heapsContent = std::fs::read_to_string(&heapsPath).unwrap();
-        assert!(heapsContent.contains("alpha,A,r_squared,classification"));
-        assert!(heapsContent.contains("1.500000"));
-        assert!(heapsContent.contains("open pangenome"));
+        let heaps_path = temp_dir.path().join("heaps_law_fit.csv");
+        let heaps_content = std::fs::read_to_string(&heaps_path).unwrap();
+        assert!(heaps_content.contains("alpha,A,r_squared,classification"));
+        assert!(heaps_content.contains("1.500000"));
+        assert!(heaps_content.contains("open pangenome"));
     }
 }

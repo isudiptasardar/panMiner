@@ -201,12 +201,16 @@ pub struct Node {
     pub annotations: HashSet<String>,
     /// Is this a paralog cluster?
     pub is_paralog: bool,
+    /// Is this a highly variable gene cluster?
+    pub is_highly_variable: bool,
     /// Centroid sequence (representative)
     pub centroid_sequence: Option<Sequence>,
     /// Whether this node represents a contig end
     pub is_contig_end: bool,
     /// Contig sequences where this gene appears (for missing gene recovery)
     pub contig_sequences: HashMap<String, Sequence>,
+    /// Gene members per genome: genome_id -> [gene_id, gene_id, ...]
+    pub gene_members: HashMap<GenomeId, Vec<String>>,
 }
 
 impl Node {
@@ -218,10 +222,32 @@ impl Node {
             genomes: HashSet::new(),
             annotations: HashSet::new(),
             is_paralog: cluster.is_paralog,
+            is_highly_variable: false,
             centroid_sequence: cluster.centroid.clone(),
             is_contig_end: false,
             contig_sequences: HashMap::new(),
+            gene_members: HashMap::new(),
         }
+    }
+
+    /// Create a new node from a cluster with gene member data.
+    ///
+    /// Populates `gene_members` by mapping each gene ID to its genome
+    /// via the `gene_data` lookup table.
+    pub fn from_cluster_with_genes(
+        cluster: &GeneCluster,
+        gene_data: &HashMap<GeneId, Gene>,
+    ) -> Self {
+        let mut node = Self::from_cluster(cluster);
+        for gene_id in &cluster.genes {
+            if let Some(gene) = gene_data.get(gene_id) {
+                node.gene_members
+                    .entry(gene.genome_id.clone())
+                    .or_default()
+                    .push(gene_id.as_str().to_string());
+            }
+        }
+        node
     }
 
     /// Add a contig sequence to this node.
@@ -283,6 +309,8 @@ pub struct PangenomeGraph {
     pub edges: std::collections::HashMap<EdgeKey, Edge>,
     /// Metadata for each genome
     pub genomes: std::collections::HashMap<GenomeId, GenomeMetadata>,
+    /// Lookup table: gene_id -> Gene (for output writers to access contig/start/end/strand)
+    pub gene_lookup: HashMap<GeneId, Gene>,
 }
 
 impl PangenomeGraph {
@@ -400,5 +428,45 @@ mod tests {
 
         let node = Node::from_cluster(&cluster);
         assert_eq!(node.centroid_sequence, Some(b"ATCGATCGATCGATCG".to_vec()));
+    }
+
+    #[test]
+    fn test_node_gene_members_default() {
+        let cluster = GeneCluster::new("test_cluster");
+        let node = Node::from_cluster(&cluster);
+        assert!(node.gene_members.is_empty());
+    }
+
+    #[test]
+    fn test_node_from_cluster_with_genes() {
+        let mut cluster = GeneCluster::new("c1");
+        cluster.add_gene(GeneId::new("geneA"));
+        cluster.add_gene(GeneId::new("geneB"));
+
+        let mut gene_data = std::collections::HashMap::new();
+        let mut gene_a = Gene::new("geneA", GenomeId::new("genome1"));
+        gene_a.contig = "contig1".to_string();
+        gene_a.start = 100;
+        gene_a.end = 200;
+        let mut gene_b = Gene::new("geneB", GenomeId::new("genome2"));
+        gene_b.contig = "contig2".to_string();
+
+        gene_data.insert(GeneId::new("geneA"), gene_a);
+        gene_data.insert(GeneId::new("geneB"), gene_b);
+
+        let node = Node::from_cluster_with_genes(&cluster, &gene_data);
+        assert_eq!(node.gene_members.len(), 2);
+        assert!(node.gene_members.contains_key(&GenomeId::new("genome1")));
+        assert!(node.gene_members.contains_key(&GenomeId::new("genome2")));
+        assert_eq!(node.gene_members[&GenomeId::new("genome1")], vec!["geneA".to_string()]);
+        assert_eq!(node.gene_members[&GenomeId::new("genome2")], vec!["geneB".to_string()]);
+    }
+
+    #[test]
+    fn test_pangenome_graph_gene_lookup() {
+        let mut graph = PangenomeGraph::new();
+        let gene = Gene::new("geneA", GenomeId::new("genome1"));
+        graph.gene_lookup.insert(GeneId::new("geneA"), gene);
+        assert!(graph.gene_lookup.contains_key(&GeneId::new("geneA")));
     }
 }

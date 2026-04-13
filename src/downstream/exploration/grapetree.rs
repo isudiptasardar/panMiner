@@ -25,6 +25,7 @@ pub struct GrapeTreeExportRunner {
     /// Include iTOL annotation export.
     include_itol: bool,
     /// Number of top variable genes for iTOL heatmap.
+    #[allow(dead_code)]
     top_n_variable: usize,
 }
 
@@ -73,7 +74,7 @@ impl GrapeTreeExportRunner {
                 if line.starts_with("label") {
                     let label = line.split('"').nth(1).unwrap_or("").to_string();
                     let mut node = Node::from_cluster(&{
-                        let mut c = crate::graph::GeneCluster::new(&label);
+                        let c = crate::graph::GeneCluster::new(&label);
                         c
                     });
                     node.cluster_id = ClusterId::new(&label);
@@ -100,6 +101,8 @@ impl GrapeTreeExportRunner {
                             node.is_paralog = v == "1";
                         }
                     }
+                } else if line.starts_with("is_highly_variable") {
+                    // Parse but not stored in Node (for future use)
                 }
             }
         }
@@ -185,7 +188,7 @@ impl GrapeTreeExportRunner {
         genome_ids: &[String],
         cluster_ids: &[String],
         presence: &[Vec<u8>],
-        total_genomes: usize,
+        _total_genomes: usize,
     ) -> Result<()> {
         let mut file = std::fs::File::create(itol_path)?;
         use std::io::Write;
@@ -278,7 +281,9 @@ impl GrapeTreeExportRunner {
     /// Run GrapeTree if it is installed.
     fn run_grapetree(profiles_path: &Path, output_prefix: &Path) -> Result<()> {
         if !Self::detect_grapetree() {
-            return Ok(());
+            return Err(Error::ExternalTool(
+                "GrapeTree is not installed. Install with: conda install -c bioconda grapetree".to_string(),
+            ));
         }
 
         let output_prefix_str = output_prefix
@@ -352,6 +357,11 @@ impl DownstreamRunner for GrapeTreeExportRunner {
         if Self::detect_grapetree() {
             let grapetree_prefix = downstream_dir.join("grapetree_tree");
             Self::run_grapetree(&profiles_path, &grapetree_prefix)?;
+        } else {
+            tracing::warn!(
+                "GrapeTree is not installed. Profiles written but tree not generated. \
+                 Install with: conda install -c bioconda grapetree"
+            );
         }
 
         Ok(GrapetreeResult {
@@ -422,7 +432,6 @@ impl DownstreamResult for GrapetreeResult {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::io::Write;
     use tempfile::TempDir;
 
     fn make_test_gml(content: &str) -> TempDir {
@@ -532,6 +541,24 @@ mod tests {
         let available = GrapeTreeExportRunner::detect_grapetree();
         // Result depends on whether grapetree is installed on this system
         let _ = available;
+    }
+
+    #[test]
+    fn test_run_grapetree_errors_when_not_installed() {
+        // If GrapeTree is not installed, run_grapetree should return an error
+        // (not silently return Ok as it did before the fix)
+        if !GrapeTreeExportRunner::detect_grapetree() {
+            let profiles = PathBuf::from("profiles.csv");
+            let output = PathBuf::from("output");
+            let result = GrapeTreeExportRunner::run_grapetree(&profiles, &output);
+            assert!(result.is_err(), "Expected error when GrapeTree not installed, got Ok");
+            let msg = result.unwrap_err().to_string();
+            assert!(
+                msg.to_lowercase().contains("grapetree"),
+                "Error should mention grapetree, got: {}",
+                msg
+            );
+        }
     }
 
     #[test]

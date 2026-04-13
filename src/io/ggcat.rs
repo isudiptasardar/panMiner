@@ -176,7 +176,9 @@ impl GGCATBuilder {
         self.build_with_ggcat_api(genomes, kmer_size, output_path)
     }
 
-    /// Build a colored compacted de Bruijn graph (stub when `dbg` feature is disabled).
+    /// Build a colored compacted de Bruijn graph.
+    ///
+    /// Returns `Error::FeatureNotEnabled` when the `dbg` feature is not enabled.
     #[cfg(not(feature = "dbg"))]
     pub fn build_colored_cdbg(
         &self,
@@ -366,7 +368,9 @@ impl GGCATBuilder {
         compute_cdbg_stats(&lv, tc, graph.num_colors)
     }
 
-    /// Compute statistics from a built colored cDBG (stub when `dbg` feature is disabled).
+    /// Compute statistics from a built colored cDBG.
+    ///
+    /// Returns `Error::FeatureNotEnabled` when the `dbg` feature is not enabled.
     #[cfg(not(feature = "dbg"))]
     pub fn compute_stats(&self, _graph: &CDBGGraph) -> Result<CDBGStats> {
         Err(Error::FeatureNotEnabled("dbg".to_string()))

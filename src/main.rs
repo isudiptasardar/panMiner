@@ -471,7 +471,7 @@ fn main() -> anyhow::Result<()> {
             }
             tracing::info!("Done.");
         }
-        Some(Commands::Analyze { input, gwas, gwas_tool, phenotypes, panstripe, tree: _, amr, amr_database: _, organism: _, neighborhood, seed_gene, neighborhood_depth, accumulation, num_samples, export_grapetree, export_itol, verbose }) => {
+        Some(Commands::Analyze { input, gwas, gwas_tool, phenotypes, panstripe, tree, amr, amr_database, organism, neighborhood, seed_gene, neighborhood_depth, accumulation, num_samples, export_grapetree, export_itol, verbose }) => {
             let filter = if verbose {
                 EnvFilter::new("debug")
             } else {
@@ -493,29 +493,60 @@ fn main() -> anyhow::Result<()> {
                 tracing::info!("Running GWAS analysis with {}", gwas_tool);
                 match gwas_tool.as_str() {
                     "pyseer" => {
-                        if panminer::gwas::PyseerRunner::is_installed() {
-                            // PyseerRunner works on in-memory graph/matrix, so we need to load first
-                            // For now, just verify the input directory has required files
-                            let presence_absence = input.join("gene_presence_absence.csv");
-                            if presence_absence.exists() {
-                                let mut runner = panminer::gwas::PyseerRunner::new();
-                                if let Some(ref phenotypes_file) = phenotypes {
-                                    runner.with_phenotypes(phenotypes_file.clone());
-                                }
-                                tracing::info!("PyseerRunner is available and ready");
-                                tracing::info!("GWAS results would be written to: {:?}", downstream_dir.join("pyseer_associations.csv"));
+                        if panminer::downstream::PyseerRunner::is_installed() {
+                            if phenotypes.is_none() {
+                                tracing::warn!("pyseer requires --phenotypes file. Provide with: --phenotypes phenotypes.txt");
                             } else {
-                                tracing::warn!("gene_presence_absence.csv not found in input directory");
+                                let runner = panminer::downstream::PyseerRunner::new()
+                                    .with_phenotypes(phenotypes.as_ref().unwrap().clone());
+                                match runner.run(&input) {
+                                    Ok(result) => {
+                                        result.write_to(&downstream_dir)?;
+                                        tracing::info!("Pyseer analysis complete: {}", result.summary());
+                                    }
+                                    Err(e) => {
+                                        tracing::error!("Pyseer analysis failed: {}", e);
+                                    }
+                                }
                             }
                         } else {
                             tracing::warn!("pyseer is not installed. Install with: pip install pyseer");
                         }
                     }
                     "scoary2" => {
-                        tracing::info!("Scoary2Runner not yet implemented - coming in Phase 2");
+                        if let Some(runner) = panminer::downstream::Scoary2Runner::detect() {
+                            let mut runner = runner.with_output_dir(downstream_dir.clone());
+                            if let Some(ref phenotypes_file) = phenotypes {
+                                runner = runner.with_phenotypes(phenotypes_file.clone());
+                            }
+                            match runner.run(&input) {
+                                Ok(result) => {
+                                    result.write_to(&downstream_dir)?;
+                                    tracing::info!("Scoary2 analysis complete: {}", result.summary());
+                                }
+                                Err(e) => {
+                                    tracing::error!("Scoary2 analysis failed: {}", e);
+                                }
+                            }
+                        } else {
+                            tracing::warn!("scoary2 is not installed. Install with: pip install scoary-2");
+                        }
                     }
                     "spydrpick" => {
-                        tracing::info!("SpydrPickRunner not yet implemented - coming in Phase 2");
+                        if let Some(runner) = panminer::downstream::SpydrPickRunner::detect() {
+                            let runner = runner.with_output_dir(downstream_dir.clone());
+                            match runner.run(&input) {
+                                Ok(result) => {
+                                    result.write_to(&downstream_dir)?;
+                                    tracing::info!("SpydrPick analysis complete: {}", result.summary());
+                                }
+                                Err(e) => {
+                                    tracing::error!("SpydrPick analysis failed: {}", e);
+                                }
+                            }
+                        } else {
+                            tracing::warn!("spydrpick is not installed. Install with: conda install -c bioconda spydrpick");
+                        }
                     }
                     _ => {
                         tracing::warn!("Unknown GWAS tool: {}. Available: pyseer, scoary2, spydrpick", gwas_tool);
@@ -525,12 +556,47 @@ fn main() -> anyhow::Result<()> {
 
             // Panstripe evolutionary model
             if panstripe {
-                tracing::info!("PanstripeRunner not yet implemented - coming in Phase 2");
+                if let Some(runner) = panminer::downstream::PanstripeRunner::detect() {
+                    let mut runner = runner.with_output_dir(downstream_dir.clone());
+                    if let Some(ref tree_file) = tree {
+                        runner = runner.with_tree(tree_file.clone());
+                    }
+                    match runner.run(&input) {
+                        Ok(result) => {
+                            result.write_to(&downstream_dir)?;
+                            tracing::info!("Panstripe analysis complete: {}", result.summary());
+                        }
+                        Err(e) => {
+                            tracing::error!("Panstripe analysis failed: {}", e);
+                        }
+                    }
+                } else {
+                    tracing::warn!("panstripe is not installed. Install with: conda install -c conda-forge r-panstripe");
+                }
             }
 
             // AMRFinderPlus resistome analysis
             if amr {
-                tracing::info!("AmrFinderRunner not yet implemented - coming in Phase 2");
+                if let Some(runner) = panminer::downstream::AmrFinderRunner::detect() {
+                    let mut runner = runner;
+                    if let Some(ref db_path) = amr_database {
+                        runner = runner.with_database(db_path.clone());
+                    }
+                    if let Some(ref org) = organism {
+                        runner = runner.with_organism(org.clone());
+                    }
+                    match runner.run(&input) {
+                        Ok(result) => {
+                            result.write_to(&downstream_dir)?;
+                            tracing::info!("AMRFinderPlus analysis complete: {}", result.summary());
+                        }
+                        Err(e) => {
+                            tracing::error!("AMRFinderPlus analysis failed: {}", e);
+                        }
+                    }
+                } else {
+                    tracing::warn!("amrfinder is not installed. Install with: conda install -c bioconda ncbi-amrfinder");
+                }
             }
 
             // Gene neighborhood extraction

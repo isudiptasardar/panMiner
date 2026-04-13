@@ -186,8 +186,22 @@ impl PanminerPipeline {
 
         // Phase 5: Build presence/absence matrix
         tracing::info!("Phase 5: Building presence/absence matrix");
-        let graph = concurrent_graph.to_standard();
+        let mut graph = concurrent_graph.to_standard();
         let matrix = self.build_matrix(&graph, &genome_ids);
+
+        // Phase 5.5: Detect highly variable genes
+        tracing::info!("Phase 5.5: Detecting highly variable genes");
+        let hv_detector = crate::graph::HighlyVariableDetector::new();
+        let hv_result = hv_detector.detect(&graph);
+        for cluster_id in &hv_result.highly_variable {
+            if let Some(node) = graph.nodes.get_mut(cluster_id) {
+                node.is_highly_variable = true;
+            }
+        }
+        tracing::info!(
+            "Highly variable detection: {} cycles found, {} merged sets, {} genes flagged",
+            hv_result.cycles_found, hv_result.merged_sets, hv_result.highly_variable.len()
+        );
 
         // Phase 6: Generate outputs
         tracing::info!("Phase 6: Generating outputs");
@@ -202,7 +216,13 @@ impl PanminerPipeline {
                 (cid.as_str().to_string(), inner)
             }).collect();
 
-        let paths = writer.write_all(&graph, &matrix, &gene_members)?;
+        let mut paths = writer.write_all(&graph, &matrix, &gene_members)?;
+
+        // Track pre-filtered graph path (written before corrections)
+        let pre_filt_path = self.config.output_dir.join("pre_filt_graph.gml");
+        if pre_filt_path.exists() {
+            paths.pre_filt_graph = Some(pre_filt_path);
+        }
 
         // Phase 7: GWAS analysis (optional)
         if self.config.run_gwas {
@@ -235,6 +255,7 @@ impl PanminerPipeline {
     /// 4. Build pangenome graph (reuses existing code)
     /// 5. Run corrections (reuses existing code)
     /// 6. Generate outputs (reuses existing code)
+    #[allow(unused_variables)]
     fn run_dbg_mode(&self) -> Result<OutputPaths> {
         tracing::info!("Running cDBG-based pipeline (mode=dbg)");
 
@@ -272,10 +293,15 @@ impl PanminerPipeline {
         };
 
         #[cfg(not(feature = "dbg"))]
-        tracing::warn!(
-            "cDBG mode requested but 'dbg' feature not enabled. \
-             Recompile with --features dbg for GGCAT support. Skipping cDBG build."
-        );
+        {
+            return Err(Error::FeatureNotEnabled("dbg".to_string()));
+        }
+
+        // The following code is only reachable when the dbg feature is enabled.
+        // The #[cfg(not(feature = "dbg"))] block above returns early, making
+        // this code unreachable without the feature. #[allow] suppresses the
+        // warning for the default (no dbg) build.
+        #[allow(unreachable_code)]
 
         // --- Phase 2: Call genes with ggCaller ---
         let ggcaller_runner = crate::io::GGCallerRunner::detect()
@@ -343,8 +369,22 @@ impl PanminerPipeline {
 
         // --- Phase 8: Build presence/absence matrix (reuses existing) ---
         tracing::info!("Phase 8: Building presence/absence matrix");
-        let graph = concurrent_graph.to_standard();
+        let mut graph = concurrent_graph.to_standard();
         let matrix = self.build_matrix(&graph, &genome_ids);
+
+        // --- Phase 8.5: Detect highly variable genes ---
+        tracing::info!("Phase 8.5: Detecting highly variable genes");
+        let hv_detector = crate::graph::HighlyVariableDetector::new();
+        let hv_result = hv_detector.detect(&graph);
+        for cluster_id in &hv_result.highly_variable {
+            if let Some(node) = graph.nodes.get_mut(cluster_id) {
+                node.is_highly_variable = true;
+            }
+        }
+        tracing::info!(
+            "Highly variable detection: {} cycles found, {} merged sets, {} genes flagged",
+            hv_result.cycles_found, hv_result.merged_sets, hv_result.highly_variable.len()
+        );
 
         // --- Phase 9: Generate outputs (reuses existing) ---
         tracing::info!("Phase 9: Generating outputs");
@@ -359,7 +399,13 @@ impl PanminerPipeline {
                 (cid.as_str().to_string(), inner)
             }).collect();
 
-        let output_paths = writer.write_all(&graph, &matrix, &gene_members)?;
+        let mut output_paths = writer.write_all(&graph, &matrix, &gene_members)?;
+
+        // Track pre-filtered graph path (if written)
+        let pre_filt_path = self.config.output_dir.join("pre_filt_graph.gml");
+        if pre_filt_path.exists() {
+            output_paths.pre_filt_graph = Some(pre_filt_path);
+        }
 
         // Write QC results if any
         if !qc_results.is_empty() {

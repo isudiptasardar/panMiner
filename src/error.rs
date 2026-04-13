@@ -84,6 +84,12 @@ pub enum Error {
 
     #[error("Parquet error: {0}")]
     Parquet(String),
+
+    #[error("Subprocess timeout: {tool} did not complete within {timeout_secs}s")]
+    SubprocessTimeout {
+        tool: String,
+        timeout_secs: u64,
+    },
 }
 
 /// Result type alias for PanMiner operations.
@@ -191,5 +197,16 @@ mod tests {
     fn test_ggcat_build_failed() {
         let err = Error::ggcat_build_failed("out of memory");
         assert!(err.to_string().contains("GGCAT cDBG build failed"));
+    }
+
+    #[test]
+    fn test_subprocess_timeout_error() {
+        let err = Error::SubprocessTimeout {
+            tool: "pyseer".to_string(),
+            timeout_secs: 3600,
+        };
+        assert!(err.to_string().contains("pyseer"));
+        assert!(err.to_string().contains("3600"));
+        assert!(!err.is_recoverable());
     }
 }

@@ -167,6 +167,7 @@ impl ConcurrentGraph {
                 target_node.support += source_node.support;
                 target_node.annotations.extend(source_node.annotations);
                 target_node.is_paralog |= source_node.is_paralog;
+                target_node.is_highly_variable |= source_node.is_highly_variable;
             });
         }
     }

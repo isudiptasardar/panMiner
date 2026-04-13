@@ -11,6 +11,11 @@ dependencies:
   # Core clustering (GPU-accelerated; falls back to built-in CPU if absent)
   - mmseqs2
 
+  # Distance estimation (skani preferred; FastANI and sourmash as fallbacks)
+  - skani        # Sparse k-mer chaining ANI (50x faster than FastANI, robust to MAGs)
+  - fastani      # Fallback pairwise ANI
+  # sourmash is installed via pip (below) for MinHash + MDS
+
   # Optional: Genome re-annotation
   - bakta
 
@@ -22,15 +27,29 @@ dependencies:
   - clustalo     # Clustal Omega
   - prank        # PRANK alignment
 
+  # Optional: Alignment trimming and filtering
+  - clipkit      # Alignment trimming
+  # BMGE requires Biopython (installed via pip below)
+
   # Optional: GWAS and downstream tools
   - pyseer       # Pan-GWAS with sequence-based kinship
-  - scoary2      # Gene-trait association (Fisher's exact test)
-  - spydrpick    # Epistasis detection (mutual information)
+  - scoary2      # Gene-trait association (Genome Biology 2024; 59x faster than Scoary)
+  - spydrpick    # Epistasis detection via mutual information (NAR 2019)
   - r-base       # Required for Panstripe evolutionary models
-  - r-panstripe  # Phylogenetically-informed gene gain/loss rates (install via: Rscript -e 'install.packages("panstripe", repos="https://cloud.r-project.org")')
+  - r-panstripe  # Phylogenetically-informed gene gain/loss rates (Genome Biology 2023)
+  # aurora (ML-based GWAS) is an R package: install.packages("aurora")
 
   # Optional: AMR detection
-  - ncbi-amrfinder  # AMRFinderPlus for antimicrobial resistance detection
+  - ncbi-amrfinder  # AMRFinderPlus for antimicrobial resistance detection (NCBI gold-standard)
 
   # Optional: Visualization
   - grapetree   # GrapeTree for MST-based visualization
+
+  # Optional: cDBG pipeline mode
+  - ggcaller    # Graph-native gene calling on de Bruijn graphs
+
+  # Python packages (via pip)
+  - pip
+  - pip:
+    - bmge       # BMGE entropy-based alignment filtering (Biopython-dependent)
+    - sourmash   # MinHash distance estimation + compare

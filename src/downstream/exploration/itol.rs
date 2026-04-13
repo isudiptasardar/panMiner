@@ -63,7 +63,7 @@ impl ItolAnnotationRunner {
                 if line.starts_with("label") {
                     let label = line.split('"').nth(1).unwrap_or("").to_string();
                     let mut node = Node::from_cluster(&{
-                        let mut c = crate::graph::GeneCluster::new(&label);
+                        let c = crate::graph::GeneCluster::new(&label);
                         c
                     });
                     node.cluster_id = ClusterId::new(&label);
@@ -89,6 +89,8 @@ impl ItolAnnotationRunner {
                             node.is_paralog = v == "1";
                         }
                     }
+                } else if line.starts_with("is_highly_variable") {
+                    // Parse but not stored in Node (for future use)
                 }
             }
         }
@@ -97,6 +99,7 @@ impl ItolAnnotationRunner {
     }
 
     /// Parse gene_data.csv to extract genome metadata.
+    #[allow(dead_code)]
     fn parse_gene_data_csv(csv_path: &Path) -> Result<HashMap<String, String>> {
         let content = fs::read_to_string(csv_path)?;
         let mut metadata: HashMap<String, String> = HashMap::new();
@@ -350,7 +353,7 @@ pub struct ItolResult {
 }
 
 impl DownstreamResult for ItolResult {
-    fn write_to(&self, dir: &Path) -> Result<()> {
+    fn write_to(&self, _dir: &Path) -> Result<()> {
         if !self.itol_annotations_path.exists() {
             return Err(crate::error::Error::InvalidInput(format!(
                 "iTOL annotations file not found: {:?}",

@@ -63,6 +63,7 @@ pub fn is_pseudogene(annotation: &str, protein: &[u8]) -> bool {
 }
 
 /// Check if a gene is a length outlier.
+#[allow(dead_code)]
 ///
 /// A gene is a length outlier if its length deviates by more than
 /// `threshold` proportion from the mode length of its cluster.
@@ -75,6 +76,7 @@ pub fn is_length_outlier(length: usize, mode_length: usize, threshold: f32) -> b
 }
 
 /// Compute the mode (most common) length from a list of lengths.
+#[allow(dead_code)]
 pub fn compute_mode_length(lengths: &[usize]) -> usize {
     use std::collections::HashMap;
     let mut counts: HashMap<usize, usize> = HashMap::new();
