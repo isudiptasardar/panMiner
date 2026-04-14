@@ -1,52 +1,36 @@
 name: panminer
 channels:
-  - bioconda
   - conda-forge
-  - defaults
+  - bioconda
 dependencies:
-  # Build toolchain
-  - rust>=1.70
-  - cargo
-
-  # Core clustering (GPU-accelerated; falls back to built-in CPU if absent)
+  # Core
+  - python=3.10
   - mmseqs2
+  - skani
+  - mafft
+  - clustalo
+  - prank
+  - clipkit
 
-  # Distance estimation
-  - skani        # Sparse k-mer chaining ANI (fast, robust to MAGs)
+  # R (strictly pinned — R 4.3 is the last version with full Bioconductor compat)
+  - r-base=4.3
+  - r-panstripe
 
-  # Optional: Genome re-annotation
-  - bakta
+  # GWAS (compatible with Python 3.10)
+  - pyseer
+  - scoary2
+  - spydrpick
 
-  # Optional: Pre-processing QC
-  - checkm2
+  # Optional but safe-ish
+  - ncbi-amrfinder
 
-  # Optional: Multiple sequence alignment
-  - mafft        # default alignment tool
-  - clustalo     # Clustal Omega
-  - prank        # PRANK alignment
+  # Risky packages — uncomment individually if needed; may cause solver conflicts
+  # - checkm2       # large dep tree, often fails to solve
+  # - bakta         # requires separate DB download (~6GB)
+  # - ggcaller      # niche, limited platform support
+  # - grapetree     # matplotlib version conflicts common
 
-  # Optional: Alignment trimming and filtering
-  - clipkit      # Alignment trimming
-  # BMGE requires Biopython (installed via pip below)
-
-  # Optional: GWAS and downstream tools
-  - pyseer       # Pan-GWAS with sequence-based kinship
-  - scoary2      # Gene-trait association (Genome Biology 2024; 59x faster than Scoary)
-  - spydrpick    # Epistasis detection via mutual information (NAR 2019)
-  - r-base       # Required for Panstripe evolutionary models
-  - r-panstripe  # Phylogenetically-informed gene gain/loss rates (Genome Biology 2023)
-  # aurora (ML-based GWAS) is an R package: install.packages("aurora")
-
-  # Optional: AMR detection
-  - ncbi-amrfinder  # AMRFinderPlus for antimicrobial resistance detection (NCBI gold-standard)
-
-  # Optional: Visualization
-  - grapetree   # GrapeTree for MST-based visualization
-
-  # Optional: cDBG pipeline mode
-  - ggcaller    # Graph-native gene calling on de Bruijn graphs
-
-  # Python packages (via pip)
   - pip
   - pip:
-    - bmge       # BMGE entropy-based alignment filtering (Biopython-dependent)
+      - bmge
+      - biopython

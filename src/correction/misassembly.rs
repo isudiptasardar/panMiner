@@ -66,14 +66,17 @@ impl MisassemblyEdgeCleaner {
             let node = entry.value();
             if node.is_contig_end {
                 let cluster_id = entry.key();
-                // Find all edges connected to this contig-end node
-                for edge_entry in graph.edges.iter() {
-                    let (from, to) = edge_entry.key();
-                    let edge = edge_entry.value();
-                    if (from == cluster_id || to == cluster_id)
-                        && edge.support < self.edge_support_threshold
-                    {
-                        bad_edges.push((from.clone(), to.clone()));
+                // Use adjacency index for O(degree) lookup instead of O(E) scan
+                for neighbor in graph.neighbors(cluster_id) {
+                    let key = if cluster_id < &neighbor {
+                        (cluster_id.clone(), neighbor.clone())
+                    } else {
+                        (neighbor.clone(), cluster_id.clone())
+                    };
+                    if let Some(edge) = graph.edges.get(&key) {
+                        if edge.support < self.edge_support_threshold {
+                            bad_edges.push(key);
+                        }
                     }
                 }
             }
@@ -101,10 +104,10 @@ impl MisassemblyEdgeCleaner {
         bad_edges.sort();
         bad_edges.dedup();
 
-        // Remove bad edges
+        // Remove bad edges (using remove_edge to keep adjacency index consistent)
         let edges_removed = bad_edges.len();
         for (from, to) in &bad_edges {
-            graph.edges.remove(&(from.clone(), to.clone()));
+            graph.remove_edge(from, to);
         }
 
         tracing::info!(

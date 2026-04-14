@@ -2,7 +2,7 @@
 
 use dashmap::DashMap;
 use rayon::prelude::*;
-
+use std::collections::HashSet;
 
 use super::types::{ClusterId, Edge, EdgeKey, GenomeId, Node, PangenomeGraph};
 use crate::io::PartialGraph;
@@ -16,6 +16,8 @@ pub struct ConcurrentGraph {
     pub nodes: DashMap<ClusterId, Node>,
     /// Edges indexed by (from, to) tuple
     pub edges: DashMap<EdgeKey, Edge>,
+    /// Adjacency index: cluster_id -> set of neighbor cluster_ids (O(1) lookup)
+    adjacency: DashMap<ClusterId, HashSet<ClusterId>>,
 }
 
 impl ConcurrentGraph {
@@ -24,6 +26,7 @@ impl ConcurrentGraph {
         Self {
             nodes: DashMap::new(),
             edges: DashMap::new(),
+            adjacency: DashMap::new(),
         }
     }
 
@@ -32,6 +35,7 @@ impl ConcurrentGraph {
         Self {
             nodes: DashMap::with_capacity(capacity),
             edges: DashMap::with_capacity(capacity * 2), // Usually more edges than nodes
+            adjacency: DashMap::with_capacity(capacity),
         }
     }
 
@@ -47,6 +51,9 @@ impl ConcurrentGraph {
         } else {
             (edge.to.clone(), edge.from.clone())
         };
+        // Update adjacency index incrementally
+        self.adjacency.entry(key.0.clone()).or_insert_with(HashSet::new).insert(key.1.clone());
+        self.adjacency.entry(key.1.clone()).or_insert_with(HashSet::new).insert(key.0.clone());
         self.edges.insert(key, edge);
     }
 
@@ -59,6 +66,10 @@ impl ConcurrentGraph {
         } else {
             (to.clone(), from.clone())
         };
+
+        // Update adjacency index incrementally
+        self.adjacency.entry(key.0.clone()).or_insert_with(HashSet::new).insert(key.1.clone());
+        self.adjacency.entry(key.1.clone()).or_insert_with(HashSet::new).insert(key.0.clone());
 
         self.edges
             .entry(key)
@@ -79,14 +90,17 @@ impl ConcurrentGraph {
     }
 
     /// Get the degree of a node (number of connected edges).
+    /// Uses the adjacency index for O(1) lookup.
     pub fn degree(&self, cluster_id: &ClusterId) -> usize {
-        self.edges
-            .iter()
-            .filter(|entry| {
-                let (from, to) = entry.key();
-                from == cluster_id || to == cluster_id
-            })
-            .count()
+        self.adjacency.get(cluster_id).map(|s| s.len()).unwrap_or(0)
+    }
+
+    /// Get the neighbors of a node.
+    /// Uses the adjacency index for O(1) lookup.
+    pub fn neighbors(&self, cluster_id: &ClusterId) -> Vec<ClusterId> {
+        self.adjacency.get(cluster_id)
+            .map(|s| s.value().iter().cloned().collect())
+            .unwrap_or_default()
     }
 
     /// Check if a node has degree 1 (only one connected edge).
@@ -112,14 +126,59 @@ impl ConcurrentGraph {
     }
 
     /// Remove a node and its connected edges (thread-safe).
+    /// Uses the adjacency index for O(degree) instead of O(E).
     pub fn remove_node(&self, cluster_id: &ClusterId) {
+        // Get neighbors from adjacency (O(1) lookup)
+        let neighbors: Vec<ClusterId> = {
+            if let Some(adj) = self.adjacency.get(cluster_id) {
+                adj.value().iter().cloned().collect()
+            } else {
+                Vec::new()
+            }
+        };
+
+        // Remove connected edges (O(degree) instead of O(E))
+        for neighbor in &neighbors {
+            let key = if cluster_id < neighbor {
+                (cluster_id.clone(), neighbor.clone())
+            } else {
+                (neighbor.clone(), cluster_id.clone())
+            };
+            self.edges.remove(&key);
+        }
+
+        // Remove this node from all neighbors' adjacency sets
+        for neighbor in &neighbors {
+            if let Some(mut adj) = self.adjacency.get_mut(neighbor) {
+                adj.remove(cluster_id);
+            }
+        }
+
+        // Remove node's own adjacency entry
+        self.adjacency.remove(cluster_id);
+
         // Remove node
         self.nodes.remove(cluster_id);
+    }
 
-        // Remove connected edges
-        self.edges.retain(|(from, to), _| {
-            from != cluster_id && to != cluster_id
-        });
+    /// Remove an edge from the graph (thread-safe).
+    /// Updates the adjacency index for both endpoints.
+    pub fn remove_edge(&self, from: &ClusterId, to: &ClusterId) -> Option<Edge> {
+        // Update adjacency: remove each endpoint from the other's set
+        if let Some(mut adj) = self.adjacency.get_mut(from) {
+            adj.remove(to);
+        }
+        if let Some(mut adj) = self.adjacency.get_mut(to) {
+            adj.remove(from);
+        }
+
+        // Remove edge from edges DashMap (canonical key ordering: min, max)
+        let key = if from < to {
+            (from.clone(), to.clone())
+        } else {
+            (to.clone(), from.clone())
+        };
+        self.edges.remove(&key).map(|(_, edge)| edge)
     }
 
     /// Remove multiple nodes in parallel.
@@ -134,27 +193,49 @@ impl ConcurrentGraph {
     /// This rewires all edges connected to `source` to connect to `target` instead,
     /// merges the node data (support and annotations), and then deletes `source`.
     /// This preserves the contiguity of the graph during error correction.
+    /// Uses the adjacency index for O(degree) instead of O(E).
     pub fn merge_nodes(&self, target: &ClusterId, source: &ClusterId) {
         if target == source {
             return;
         }
 
-        // Gather edges connected to source
-        let mut edges_to_rewire = Vec::new();
-        self.edges.retain(|(from, to), edge| {
-            if from == source || to == source {
-                let neighbor = if from == source { to.clone() } else { from.clone() };
-                // Don't rewire the self-edge between target and source (it just gets deleted)
-                if neighbor != *target {
-                    edges_to_rewire.push((neighbor, edge.genomes.clone()));
-                }
-                false // remove the edge from DashMap
+        // Get source's neighbors from adjacency (O(1))
+        let source_neighbors: Vec<ClusterId> = {
+            if let Some(adj) = self.adjacency.get(source) {
+                adj.value().iter().cloned().collect()
             } else {
-                true // keep the edge
+                Vec::new()
             }
-        });
+        };
 
-        // Rewire edges to target
+        // Remove all edges connected to source and collect genomes for rewiring (O(degree))
+        let mut edges_to_rewire = Vec::new();
+        for neighbor in &source_neighbors {
+            let key = if source < neighbor {
+                (source.clone(), neighbor.clone())
+            } else {
+                (neighbor.clone(), source.clone())
+            };
+
+            if let Some((_, edge)) = self.edges.remove(&key) {
+                if neighbor != target {
+                    edges_to_rewire.push((neighbor.clone(), edge.genomes.clone()));
+                }
+                // If neighbor == target, the edge is just deleted (not rewired)
+            }
+        }
+
+        // Update adjacency: remove source from all neighbors' adjacency sets
+        for neighbor in &source_neighbors {
+            if let Some(mut adj) = self.adjacency.get_mut(neighbor) {
+                adj.remove(source);
+            }
+        }
+
+        // Remove source's own adjacency entry
+        self.adjacency.remove(source);
+
+        // Rewire edges to target (add_edge_genome updates adjacency)
         for (neighbor, genomes) in edges_to_rewire {
             for genome in genomes {
                 self.add_edge_genome(target.clone(), neighbor.clone(), genome);

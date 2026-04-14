@@ -157,6 +157,7 @@ impl ParalogResolver {
     ///
     /// The context vector captures the neighborhood structure around a node,
     /// represented as a map from neighbor cluster IDs to their BFS distance.
+    /// Uses the adjacency index for O(degree) neighbor lookups.
     fn compute_context_vector(&self, graph: &ConcurrentGraph, start: &ClusterId) -> ContextVector {
         let mut visited = HashMap::new();
         let mut queue = VecDeque::new();
@@ -170,21 +171,10 @@ impl ParalogResolver {
                 continue;
             }
 
-            for edge_entry in graph.edges.iter() {
-                let (from, to) = edge_entry.key();
-                let neighbor = if from == &current {
-                    Some(to.clone())
-                } else if to == &current {
-                    Some(from.clone())
-                } else {
-                    None
-                };
-
-                if let Some(neighbor) = neighbor {
-                    if !visited.contains_key(&neighbor) {
-                        visited.insert(neighbor.clone(), depth + 1);
-                        queue.push_back(neighbor);
-                    }
+            for neighbor in graph.neighbors(&current) {
+                if !visited.contains_key(&neighbor) {
+                    visited.insert(neighbor.clone(), depth + 1);
+                    queue.push_back(neighbor);
                 }
             }
         }

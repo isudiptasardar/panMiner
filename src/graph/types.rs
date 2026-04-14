@@ -311,6 +311,10 @@ pub struct PangenomeGraph {
     pub genomes: std::collections::HashMap<GenomeId, GenomeMetadata>,
     /// Lookup table: gene_id -> Gene (for output writers to access contig/start/end/strand)
     pub gene_lookup: HashMap<GeneId, Gene>,
+    /// Adjacency index: cluster_id -> set of neighbor cluster_ids (O(1) lookup)
+    adjacency: HashMap<ClusterId, HashSet<ClusterId>>,
+    /// Whether the adjacency index needs rebuilding
+    adjacency_dirty: bool,
 }
 
 impl PangenomeGraph {
@@ -327,31 +331,63 @@ impl PangenomeGraph {
     /// Add an edge to the graph.
     pub fn add_edge(&mut self, edge: Edge) {
         let key = (edge.from.clone(), edge.to.clone());
+        // Update adjacency index incrementally
+        self.adjacency.entry(edge.from.clone()).or_default().insert(edge.to.clone());
+        self.adjacency.entry(edge.to.clone()).or_default().insert(edge.from.clone());
         self.edges.insert(key, edge);
     }
 
+    /// Rebuild the adjacency index from scratch.
+    pub fn rebuild_adjacency(&mut self) {
+        self.adjacency.clear();
+        for ((from, to), _) in &self.edges {
+            self.adjacency.entry(from.clone()).or_default().insert(to.clone());
+            self.adjacency.entry(to.clone()).or_default().insert(from.clone());
+        }
+        self.adjacency_dirty = false;
+    }
+
     /// Get the degree of a node (number of connected edges).
+    /// Uses the adjacency index for O(1) lookup.
     pub fn degree(&self, cluster_id: &ClusterId) -> usize {
-        self.edges
-            .iter()
-            .filter(|((from, to), _)| from == cluster_id || to == cluster_id)
-            .count()
+        self.adjacency.get(cluster_id).map(|s| s.len()).unwrap_or(0)
     }
 
     /// Get neighbors of a node.
+    /// Uses the adjacency index for O(1) lookup.
     pub fn neighbors(&self, cluster_id: &ClusterId) -> Vec<&ClusterId> {
-        self.edges
-            .iter()
-            .filter_map(|((from, to), _)| {
-                if from == cluster_id {
-                    Some(to)
-                } else if to == cluster_id {
-                    Some(from)
-                } else {
-                    None
+        self.adjacency.get(cluster_id)
+            .map(|s| s.iter().collect())
+            .unwrap_or_default()
+    }
+
+    /// Check if two nodes are connected by an edge.
+    pub fn has_edge(&self, from: &ClusterId, to: &ClusterId) -> bool {
+        self.edges.contains_key(&(from.clone(), to.clone()))
+            || self.edges.contains_key(&(to.clone(), from.clone()))
+    }
+
+    /// Remove a node and all its edges from the graph.
+    pub fn remove_node(&mut self, cluster_id: &ClusterId) -> Option<Node> {
+        // Remove edges and update adjacency
+        if let Some(neighbors) = self.adjacency.remove(cluster_id) {
+            for neighbor in &neighbors {
+                if let Some(neighbor_set) = self.adjacency.get_mut(neighbor) {
+                    neighbor_set.remove(cluster_id);
                 }
-            })
-            .collect()
+                self.edges.remove(&(cluster_id.clone(), neighbor.clone()));
+                self.edges.remove(&(neighbor.clone(), cluster_id.clone()));
+            }
+        }
+        self.nodes.remove(cluster_id)
+    }
+
+    /// Remove an edge from the graph.
+    pub fn remove_edge(&mut self, from: &ClusterId, to: &ClusterId) -> Option<Edge> {
+        // Update adjacency
+        if let Some(s) = self.adjacency.get_mut(from) { s.remove(to); }
+        if let Some(s) = self.adjacency.get_mut(to) { s.remove(from); }
+        self.edges.remove(&(from.clone(), to.clone())).or_else(|| self.edges.remove(&(to.clone(), from.clone())))
     }
 
     /// Get the number of nodes.
@@ -408,16 +444,74 @@ mod tests {
             c
         });
 
+        let node3 = Node::from_cluster(&{
+            let mut c = GeneCluster::new("c3");
+            c.support = 4;
+            c
+        });
+
         graph.add_node(node1);
         graph.add_node(node2);
+        graph.add_node(node3);
 
-        let mut edge = Edge::new(ClusterId::new("c1"), ClusterId::new("c2"));
-        edge.add_genome(GenomeId::new("genome1"));
-        graph.add_edge(edge);
+        let mut edge12 = Edge::new(ClusterId::new("c1"), ClusterId::new("c2"));
+        edge12.add_genome(GenomeId::new("genome1"));
+        graph.add_edge(edge12);
 
-        assert_eq!(graph.node_count(), 2);
-        assert_eq!(graph.edge_count(), 1);
-        assert_eq!(graph.degree(&ClusterId::new("c1")), 1);
+        let mut edge13 = Edge::new(ClusterId::new("c1"), ClusterId::new("c3"));
+        edge13.add_genome(GenomeId::new("genome2"));
+        graph.add_edge(edge13);
+
+        assert_eq!(graph.node_count(), 3);
+        assert_eq!(graph.edge_count(), 2);
+        assert_eq!(graph.degree(&ClusterId::new("c1")), 2);
+        assert_eq!(graph.degree(&ClusterId::new("c2")), 1);
+        assert_eq!(graph.degree(&ClusterId::new("c3")), 1);
+    }
+
+    #[test]
+    fn test_adjacency_index() {
+        let mut graph = PangenomeGraph::new();
+        graph.add_node(Node::from_cluster(&{ let mut c = GeneCluster::new("a"); c.support = 1; c }));
+        graph.add_node(Node::from_cluster(&{ let mut c = GeneCluster::new("b"); c.support = 1; c }));
+        graph.add_node(Node::from_cluster(&{ let mut c = GeneCluster::new("c"); c.support = 1; c }));
+
+        graph.add_edge(Edge::new(ClusterId::new("a"), ClusterId::new("b")));
+        graph.add_edge(Edge::new(ClusterId::new("a"), ClusterId::new("c")));
+
+        assert_eq!(graph.degree(&ClusterId::new("a")), 2);
+        assert_eq!(graph.degree(&ClusterId::new("b")), 1);
+        assert_eq!(graph.degree(&ClusterId::new("c")), 1);
+
+        let neighbors_a: Vec<_> = graph.neighbors(&ClusterId::new("a")).into_iter().collect();
+        assert_eq!(neighbors_a.len(), 2);
+    }
+
+    #[test]
+    fn test_remove_node() {
+        let mut graph = PangenomeGraph::new();
+        graph.add_node(Node::from_cluster(&{ let mut c = GeneCluster::new("x"); c.support = 1; c }));
+        graph.add_node(Node::from_cluster(&{ let mut c = GeneCluster::new("y"); c.support = 1; c }));
+        graph.add_edge(Edge::new(ClusterId::new("x"), ClusterId::new("y")));
+
+        let removed = graph.remove_node(&ClusterId::new("x"));
+        assert!(removed.is_some());
+        assert_eq!(graph.node_count(), 1);
+        assert_eq!(graph.edge_count(), 0);
+        assert_eq!(graph.degree(&ClusterId::new("y")), 0);
+    }
+
+    #[test]
+    fn test_remove_edge() {
+        let mut graph = PangenomeGraph::new();
+        graph.add_node(Node::from_cluster(&{ let mut c = GeneCluster::new("p"); c.support = 1; c }));
+        graph.add_node(Node::from_cluster(&{ let mut c = GeneCluster::new("q"); c.support = 1; c }));
+        graph.add_edge(Edge::new(ClusterId::new("p"), ClusterId::new("q")));
+
+        let edge = graph.remove_edge(&ClusterId::new("p"), &ClusterId::new("q"));
+        assert!(edge.is_some());
+        assert_eq!(graph.edge_count(), 0);
+        assert_eq!(graph.degree(&ClusterId::new("p")), 0);
     }
 
     #[test]

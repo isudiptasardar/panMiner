@@ -4,7 +4,7 @@
 //! clusters with identical DNA sequences (>=95% coverage, >=99% identity).
 //! Also collapses gene families sharing common neighbors at 70% threshold.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use crate::error::Result;
 use crate::graph::ConcurrentGraph;
@@ -274,36 +274,16 @@ impl FragmentMerger {
     }
 
     /// Check if two clusters share a common neighbor in the graph.
+    /// Uses the adjacency index for O(degree) lookups instead of O(E) scans.
     fn share_neighbor(
         &self,
         graph: &ConcurrentGraph,
         id_a: &ClusterId,
         id_b: &ClusterId,
     ) -> bool {
-        let mut neighbors_a = Vec::new();
-        for entry in graph.edges.iter() {
-            let (from, to) = entry.key();
-            if from == id_a {
-                neighbors_a.push(to.clone());
-            } else if to == id_a {
-                neighbors_a.push(from.clone());
-            }
-        }
-
-        // Check if any neighbor of id_a is also a neighbor of id_b
-        graph.edges
-            .iter()
-            .any(|entry| {
-                let (from, to) = entry.key();
-                let neighbor = if from == id_b {
-                    Some(to)
-                } else if to == id_b {
-                    Some(from)
-                } else {
-                    None
-                };
-                neighbor.map(|n| neighbors_a.contains(n)).unwrap_or(false)
-            })
+        let neighbors_a: HashSet<ClusterId> = graph.neighbors(id_a).into_iter().collect();
+        let neighbors_b = graph.neighbors(id_b);
+        neighbors_b.iter().any(|n| neighbors_a.contains(n))
     }
 
     /// Pre-cluster gene families by length and prefix for efficient comparison.
@@ -342,6 +322,7 @@ impl FragmentMerger {
     ///
     /// This implements Panaroo's approach of searching at depths [1,2,3]
     /// for similar clusters, instead of only checking edge-adjacent pairs.
+    /// Uses the adjacency index for O(degree) lookups instead of O(E) scans.
     fn collect_neighbors_at_depth(
         &self,
         graph: &ConcurrentGraph,
@@ -357,23 +338,12 @@ impl FragmentMerger {
         for _depth in 0..max_depth {
             let mut next_level = Vec::new();
             for node_id in &current_level {
-                // Find edges connected to this node
-                for edge_entry in graph.edges.iter() {
-                    let (from, to) = edge_entry.key();
-                    let neighbor = if from == node_id {
-                        Some(to.clone())
-                    } else if to == node_id {
-                        Some(from.clone())
-                    } else {
-                        None
-                    };
-
-                    if let Some(neighbor) = neighbor {
-                        if !visited.contains(&neighbor) {
-                            visited.insert(neighbor.clone());
-                            next_level.push(neighbor.clone());
-                            neighbors.push(neighbor);
-                        }
+                // Use adjacency index for O(degree) lookup instead of O(E) scan
+                for neighbor in graph.neighbors(node_id) {
+                    if !visited.contains(&neighbor) {
+                        visited.insert(neighbor.clone());
+                        next_level.push(neighbor.clone());
+                        neighbors.push(neighbor);
                     }
                 }
             }

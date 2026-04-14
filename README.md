@@ -97,16 +97,32 @@ cargo build --release
 cargo install --path .
 ```
 
-### Method 3: Conda Environment (Full Toolchain)
+### Method 3: Conda Environment (Recommended for Full Toolchain)
+
+**Rust must be installed first** (via rustup, not conda) before creating the conda environment:
 
 ```bash
+# Step 1: Install Rust (required before conda env)
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+source "$HOME/.cargo/env"
+
+# Step 2: Create conda environment with external tools
 conda env create -f environment.yml
 conda activate panminer
+
+# Step 3: Build and install PanMiner
 cargo build --release
 cargo install --path .
 ```
 
-This installs PanMiner plus all optional tools (MMseqs2, skani, MAFFT, ClipKIT, etc.).
+The `environment.yml` installs PanMiner's external tool dependencies (MMseqs2, skani, MAFFT, etc.) but **not Rust itself** — Rust should come from rustup to avoid conda solver conflicts.
+
+**Troubleshooting:** If conda takes too long or hangs during solving:
+1. Install with `conda env create -f environment.yml --strict-channel-priority`
+2. If that fails, comment out more packages in `environment.yml` and retry
+3. Alternatively, install individual tools as needed (see External Tools below)
+
+**Risky packages** (checkm2, bakta, ggcaller, grapetree) are commented out in `environment.yml` because they often cause conda solver conflicts. Uncomment them individually if needed, or install them separately.
 
 ### Method 4: Installation Script (Auto-detect GPU)
 
@@ -127,33 +143,27 @@ The installation script:
 
 All external tools are auto-detected. If a tool is not installed, its feature is gracefully skipped.
 
+The easiest approach is to use the conda environment (Method 3 above). To install tools individually:
+
 ```bash
-# Distance estimation
-conda install -c bioconda skani
+# Core tools (included in environment.yml)
+conda install -c conda-forge -c bioconda mmseqs2 skani mafft clustalo prank clipkit
 
-# Clustering (GPU-accelerated)
-conda install -c bioconda mmseqs2
-
-# Re-annotation
-conda install -c conda-forge -c bioconda bakta
-bakta_db download --output ~/.bakta --type full
-
-# QC
-conda install -c bioconda checkm2
-
-# Multiple sequence alignment
-conda install -c bioconda mafft clustalo prank
-
-# Alignment trimming
-pip install clipkit                           # ClipKIT
-conda install -c bioconda bmge               # BMGE
+# Alignment filtering
+pip install bmge                                  # BMGE (requires Biopython)
+pip install biopython                              # Biopython dependency for BMGE
 
 # Downstream analysis
-pip install pyseer                            # Pan-GWAS
-pip install scoary-2                          # Gene-trait association
-conda install -c bioconda spydrpick          # Epistasis detection
-# Panstripe requires R: install.packages("panstripe")
-conda install -c bioconda ncbi-amrfinder     # AMR detection
+conda install -c conda-forge -c bioconda pyseer   # Pan-GWAS
+conda install -c conda-forge -c bioconda scoary2  # Gene-trait association
+conda install -c conda-forge -c bioconda spydrpick # Epistasis detection
+conda install -c conda-forge -c bioconda r-base=4.3 r-panstripe  # Evolutionary model
+conda install -c conda-forge -c bioconda ncbi-amrfinder  # AMR detection
+
+# Tools with large dep trees — install separately if needed
+conda install -c conda-forge -c bioconda checkm2  # QC (large dep tree)
+conda install -c conda-forge -c bioconda bakta    # Re-annotation (~6GB DB)
+bakta_db download --output ~/.bakta --type full   # Bakta database download
 ```
 
 ## Quick Start

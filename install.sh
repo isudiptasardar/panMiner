@@ -34,16 +34,9 @@ check_rust() {
 install_rust() {
     if check_rust; then return 0; fi
 
-    warn "Rust not found."
+    warn "Rust not found. Installing via rustup (recommended over conda to avoid solver conflicts)..."
 
-    # Check if conda is available
-    if command -v conda &>/dev/null; then
-        info "Conda detected. Installing Rust via conda..."
-        conda install -y -c conda-forge rust cargo
-        return 0
-    fi
-
-    # Fall back to rustup
+    # Use rustup — conda's Rust often conflicts with the rest of the toolchain
     info "Installing Rust via rustup..."
     curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
     source "${HOME}/.cargo/env"
