@@ -113,8 +113,8 @@ impl ParalogResolver {
                 let node_b = graph.nodes.get(id_b).unwrap();
 
                 // Quick length check: only merge paralogs with similar-length sequences
-                let seq_a = node_a.centroid_sequence.as_deref().unwrap_or(&[]);
-                let seq_b = node_b.centroid_sequence.as_deref().unwrap_or(&[]);
+                let seq_a = node_a.centroid_sequences.first().map(|s| s.as_slice()).unwrap_or(&[]);
+                let seq_b = node_b.centroid_sequences.first().map(|s| s.as_slice()).unwrap_or(&[]);
                 let len_a = seq_a.len().max(1);
                 let len_b = seq_b.len().max(1);
                 let len_ratio = len_a.min(len_b) as f64 / len_a.max(len_b) as f64;

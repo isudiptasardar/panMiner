@@ -47,7 +47,7 @@ impl AlignmentWriter {
             .iter()
             .filter(|(_, node)| node.support >= core_threshold)
             .filter_map(|(cluster_id, node)| {
-                node.centroid_sequence.clone()
+                node.centroid_sequences.first().cloned()
                     .map(|seq| (cluster_id.to_string(), seq))
             })
             .collect();
@@ -88,7 +88,7 @@ impl AlignmentWriter {
             .iter()
             .filter(|(_, node)| node.support > 0 && node.support < core_threshold)
             .filter_map(|(cluster_id, node)| {
-                node.centroid_sequence.clone()
+                node.centroid_sequences.first().cloned()
                     .map(|seq| (cluster_id.to_string(), seq))
             })
             .collect();

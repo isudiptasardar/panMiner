@@ -728,7 +728,7 @@ impl PanminerPipeline {
             .map(|entry| {
                 let cluster_id = entry.key();
                 let node = entry.value();
-                (cluster_id.to_string(), node.centroid_sequence.clone().unwrap_or_default())
+                (cluster_id.to_string(), node.centroid_sequences.first().cloned().unwrap_or_default())
             })
             .filter(|(_, seq)| !seq.is_empty())
             .collect();
@@ -760,7 +760,7 @@ impl PanminerPipeline {
             .map(|entry| {
                 let cluster_id = entry.key();
                 let node = entry.value();
-                (cluster_id.to_string(), node.centroid_sequence.clone().unwrap_or_default())
+                (cluster_id.to_string(), node.centroid_sequences.first().cloned().unwrap_or_default())
             })
             .filter(|(_, seq)| !seq.is_empty())
             .collect();
@@ -793,7 +793,7 @@ impl PanminerPipeline {
             .filter_map(|entry| {
                 let cluster_id = entry.key().as_str().to_string();
                 let node = entry.value();
-                node.centroid_sequence.clone().map(|seq| (cluster_id, seq))
+                node.centroid_sequences.first().map(|seq| (cluster_id.clone(), seq.clone()))
             })
             .collect();
 

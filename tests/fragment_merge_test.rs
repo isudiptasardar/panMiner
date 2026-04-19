@@ -40,7 +40,7 @@ fn test_fragment_merger_with_real_sequences() {
         .nodes
         .iter()
         .filter_map(|entry| {
-            entry.value().centroid_sequence.clone().map(|seq| (entry.key().to_string(), seq))
+            entry.value().centroid_sequences.first().cloned().map(|seq| (entry.key().to_string(), seq))
         })
         .collect();
 
@@ -64,7 +64,7 @@ fn test_fragment_merger_no_sequences() {
         c.support = 2;
         c
     });
-    node.centroid_sequence = None; // Explicitly no sequence
+    node.centroid_sequences = vec![]; // Explicitly no sequence
     graph.add_node(node);
 
     let empty_sequences: std::collections::HashMap<String, Vec<u8>> = std::collections::HashMap::new();
@@ -81,7 +81,7 @@ fn test_node_from_cluster_with_centroid() {
     cluster.support = 3;
 
     let node = Node::from_cluster(&cluster);
-    assert_eq!(node.centroid_sequence, Some(b"ATCGATCGATCGATCG".to_vec()));
+    assert_eq!(node.centroid_sequences, vec![b"ATCGATCGATCGATCG".to_vec()]);
 }
 
 #[test]
@@ -91,7 +91,7 @@ fn test_empty_graph_no_sequences() {
     let sequences: std::collections::HashMap<String, Vec<u8>> = graph
         .nodes
         .iter()
-        .filter_map(|entry| entry.value().centroid_sequence.clone().map(|seq| (entry.key().to_string(), seq)))
+        .filter_map(|entry| entry.value().centroid_sequences.first().cloned().map(|seq| (entry.key().to_string(), seq)))
         .collect();
 
     assert!(sequences.is_empty(), "Empty graph should have no sequences");
@@ -123,7 +123,7 @@ fn test_fragment_merger_identical_sequences() {
     let sequences: std::collections::HashMap<String, Vec<u8>> = graph
         .nodes
         .iter()
-        .filter_map(|entry| entry.value().centroid_sequence.clone().map(|seq| (entry.key().to_string(), seq)))
+        .filter_map(|entry| entry.value().centroid_sequences.first().cloned().map(|seq| (entry.key().to_string(), seq)))
         .collect();
 
     let merger = FragmentMerger::new()

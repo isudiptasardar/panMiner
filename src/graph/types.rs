@@ -203,8 +203,8 @@ pub struct Node {
     pub is_paralog: bool,
     /// Is this a highly variable gene cluster?
     pub is_highly_variable: bool,
-    /// Centroid sequence (representative)
-    pub centroid_sequence: Option<Sequence>,
+    /// Centroid sequences (representative, supports multi-centroid after merge)
+    pub centroid_sequences: Vec<Sequence>,
     /// Whether this node represents a contig end
     pub is_contig_end: bool,
     /// Contig sequences where this gene appears (for missing gene recovery)
@@ -223,7 +223,7 @@ impl Node {
             annotations: HashSet::new(),
             is_paralog: cluster.is_paralog,
             is_highly_variable: false,
-            centroid_sequence: cluster.centroids.first().cloned(),
+            centroid_sequences: cluster.centroids.clone(),
             is_contig_end: false,
             contig_sequences: HashMap::new(),
             gene_members: HashMap::new(),
@@ -521,7 +521,7 @@ mod tests {
         cluster.support = 3;
 
         let node = Node::from_cluster(&cluster);
-        assert_eq!(node.centroid_sequence, Some(b"ATCGATCGATCGATCG".to_vec()));
+        assert_eq!(node.centroid_sequences, vec![b"ATCGATCGATCGATCG".to_vec()]);
     }
 
     #[test]

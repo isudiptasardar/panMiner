@@ -258,7 +258,9 @@ fn cluster_centroids(graphs: &[PangenomeGraph], threshold: f32) -> Vec<Vec<Clust
     let mut all_centroids: Vec<(ClusterId, Option<crate::graph::Sequence>)> = Vec::new();
     for graph in graphs {
         for (cluster_id, node) in &graph.nodes {
-            all_centroids.push((cluster_id.clone(), node.centroid_sequence.clone()));
+            for seq in &node.centroid_sequences {
+                all_centroids.push((cluster_id.clone(), Some(seq.clone())));
+            }
         }
     }
 

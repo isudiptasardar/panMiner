@@ -114,10 +114,10 @@ impl JsonWriter {
                     .map(|g| (g.contig.clone(), g.start.to_string(), g.end.to_string(), format!("{}", g.strand)))
                     .unwrap_or(("NA".to_string(), "NA".to_string(), "NA".to_string(), "NA".to_string()));
 
-            let dna_seq = node.centroid_sequence.as_ref()
+            let dna_seq = node.centroid_sequences.first()
                 .map(|s| String::from_utf8_lossy(s).to_string())
                 .unwrap_or_default();
-            let protein_seq = if let Some(seq) = &node.centroid_sequence {
+            let protein_seq = if let Some(seq) = node.centroid_sequences.first() {
                 let protein = crate::io::translate(seq);
                 String::from_utf8_lossy(&protein).to_string()
             } else {
@@ -144,7 +144,7 @@ impl JsonWriter {
             let annotation = node.annotations.iter().next().cloned()
                 .unwrap_or_else(|| "hypothetical protein".to_string());
 
-            if let Some(seq) = &node.centroid_sequence {
+            if let Some(seq) = node.centroid_sequences.first() {
                 writeln!(file, ">{} {}", cluster_id, annotation)?;
                 writeln!(file, "{}", String::from_utf8_lossy(seq))?;
             }
@@ -163,7 +163,7 @@ impl JsonWriter {
             let annotation = node.annotations.iter().next().cloned()
                 .unwrap_or_else(|| "hypothetical protein".to_string());
 
-            if let Some(seq) = &node.centroid_sequence {
+            if let Some(seq) = node.centroid_sequences.first() {
                 writeln!(file, ">{} {}", cluster_id, annotation)?;
                 writeln!(file, "{}", String::from_utf8_lossy(seq))?;
             }
@@ -182,7 +182,7 @@ impl JsonWriter {
             let annotation = node.annotations.iter().next().cloned()
                 .unwrap_or_else(|| "hypothetical protein".to_string());
 
-            if let Some(seq) = &node.centroid_sequence {
+            if let Some(seq) = node.centroid_sequences.first() {
                 let protein = crate::io::translate(seq);
                 if !protein.is_empty() {
                     writeln!(file, ">{} {}", cluster_id, annotation)?;
@@ -277,7 +277,7 @@ mod tests {
 
         let mut graph = PangenomeGraph::new();
         let mut node = Node::from_cluster(&GeneCluster::new("c1"));
-        node.centroid_sequence = Some(b"ATGCGT".to_vec());
+        node.centroid_sequences = vec![b"ATGCGT".to_vec()];
         node.annotations.insert("hypothetical protein".to_string());
         let mut gene = Gene::new("geneA", GenomeId::new("genome1"));
         gene.contig = "contig1".to_string();

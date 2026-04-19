@@ -35,21 +35,23 @@ impl GmlWriter {
             writeln!(writer, "    is_highly_variable {}", if node.is_highly_variable { 1 } else { 0 })?;
 
             // Length of centroid sequence
-            let length = node.centroid_sequence.as_ref().map(|s| s.len()).unwrap_or(0);
+            let length = node.centroid_sequences.first().map(|s| s.len()).unwrap_or(0);
             writeln!(writer, "    length {}", length)?;
 
-            // Centroid DNA sequence
-            if let Some(seq) = &node.centroid_sequence {
-                let seq_str = String::from_utf8_lossy(seq);
-                writeln!(writer, "    seq \"{}\"", escape_gml_string(&seq_str))?;
-            }
+            // Centroid DNA sequences (comma-separated for multi-centroid nodes)
+            if !node.centroid_sequences.is_empty() {
+                let centroid_seqs: Vec<String> = node.centroid_sequences.iter()
+                    .map(|s| String::from_utf8_lossy(s).to_string())
+                    .collect();
+                writeln!(writer, "    seq \"{}\"", escape_gml_string(&centroid_seqs.join(",")))?;
 
-            // Protein sequence
-            if let Some(seq) = &node.centroid_sequence {
-                let protein = crate::io::translate(seq);
-                let protein_str = String::from_utf8_lossy(&protein);
-                if !protein_str.is_empty() {
-                    writeln!(writer, "    protein \"{}\"", escape_gml_string(&protein_str))?;
+                // Protein sequence from first centroid
+                if let Some(seq) = node.centroid_sequences.first() {
+                    let protein = crate::io::translate(seq);
+                    let protein_str = String::from_utf8_lossy(&protein);
+                    if !protein_str.is_empty() {
+                        writeln!(writer, "    protein \"{}\"", escape_gml_string(&protein_str))?;
+                    }
                 }
             }
 
@@ -145,7 +147,7 @@ mod tests {
 
         let mut graph = PangenomeGraph::new();
         let mut node = Node::from_cluster(&GeneCluster::new("c1"));
-        node.centroid_sequence = Some(b"ATGCGT".to_vec());
+        node.centroid_sequences = vec![b"ATGCGT".to_vec()];
         node.support = 3;
         node.genomes.insert(GenomeId::new("genome1"));
         node.genomes.insert(GenomeId::new("genome2"));

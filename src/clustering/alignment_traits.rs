@@ -78,7 +78,7 @@ pub fn build_alignment_from_graph(
     let mut sequences = Vec::new();
 
     for (cluster_id, node) in &graph.nodes {
-        if let Some(centroid) = &node.centroid_sequence {
+        if let Some(centroid) = node.centroid_sequences.first() {
             sequences.push((cluster_id.to_string(), centroid.clone()));
         }
     }
