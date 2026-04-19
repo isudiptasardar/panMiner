@@ -250,6 +250,7 @@ impl ConcurrentGraph {
                 target_node.is_paralog |= source_node.is_paralog;
                 target_node.is_highly_variable |= source_node.is_highly_variable;
                 target_node.centroid_sequences.extend(source_node.centroid_sequences);
+                target_node.contig_end_genomes.extend(source_node.contig_end_genomes);
             });
         }
     }

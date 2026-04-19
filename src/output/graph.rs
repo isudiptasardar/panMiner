@@ -72,6 +72,14 @@ impl GmlWriter {
                 writeln!(writer, "    member \"{}\"", all_members.join(";"))?;
             }
 
+            // Contig-end genomes (comma-separated)
+            let contig_end_ids: Vec<String> = node.contig_end_genomes.iter()
+                .map(|g| g.as_str().to_string())
+                .collect();
+            if !contig_end_ids.is_empty() {
+                writeln!(writer, "    contig_end_genomes \"{}\"", contig_end_ids.join(","))?;
+            }
+
             // Annotation
             if let Some(ann) = node.annotations.iter().next() {
                 writeln!(writer, "    annotation \"{}\"", escape_gml_string(ann))?;

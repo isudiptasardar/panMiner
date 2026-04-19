@@ -46,7 +46,7 @@ impl ContigEndPruner {
                 .filter(|entry| {
                     let node = entry.value();
                     // Check if it's a contig-end node (degree 1) with low support
-                    node.is_contig_end && graph.is_degree_one(entry.key()) && node.support < self.min_support
+                    !node.contig_end_genomes.is_empty() && graph.is_degree_one(entry.key()) && node.support < self.min_support
                 })
                 .map(|entry| entry.key().clone())
                 .collect::<Vec<_>>();
@@ -111,7 +111,7 @@ mod tests {
             c
         });
         let mut end_node = end_node;
-        end_node.is_contig_end = true;
+        end_node.contig_end_genomes.insert(GenomeId::new("g1"));
         graph.add_node(end_node);
 
         // Add a high-support node
@@ -147,7 +147,7 @@ mod tests {
             c
         });
         let mut end_node = end_node;
-        end_node.is_contig_end = true;
+        end_node.contig_end_genomes.insert(GenomeId::new("g1"));
         graph.add_node(end_node);
 
         // Add another node
@@ -184,7 +184,7 @@ mod tests {
             c
         });
         let mut end_node = end_node;
-        end_node.is_contig_end = true;
+        end_node.contig_end_genomes.insert(GenomeId::new("g1"));
         graph.add_node(end_node);
 
         // Add two other nodes

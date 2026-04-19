@@ -205,8 +205,8 @@ pub struct Node {
     pub is_highly_variable: bool,
     /// Centroid sequences (representative, supports multi-centroid after merge)
     pub centroid_sequences: Vec<Sequence>,
-    /// Whether this node represents a contig end
-    pub is_contig_end: bool,
+    /// Genomes where this cluster appears at a contig boundary
+    pub contig_end_genomes: HashSet<GenomeId>,
     /// Contig sequences where this gene appears (for missing gene recovery)
     pub contig_sequences: HashMap<String, Sequence>,
     /// Gene members per genome: genome_id -> [gene_id, gene_id, ...]
@@ -224,7 +224,7 @@ impl Node {
             is_paralog: cluster.is_paralog,
             is_highly_variable: false,
             centroid_sequences: cluster.centroids.clone(),
-            is_contig_end: false,
+            contig_end_genomes: HashSet::new(),
             contig_sequences: HashMap::new(),
             gene_members: HashMap::new(),
         }

@@ -64,7 +64,7 @@ impl MisassemblyEdgeCleaner {
         // Criterion 1: Edges near contig-end nodes with low support
         for entry in graph.nodes.iter() {
             let node = entry.value();
-            if node.is_contig_end {
+            if !node.contig_end_genomes.is_empty() {
                 let cluster_id = entry.key();
                 // Use adjacency index for O(degree) lookup instead of O(E) scan
                 for neighbor in graph.neighbors(cluster_id) {
@@ -134,7 +134,7 @@ mod tests {
             c.support = 1;
             c
         });
-        end_node.is_contig_end = true;
+        end_node.contig_end_genomes.insert(GenomeId::new("g1"));
         graph.add_node(end_node);
 
         // Add high-support core node

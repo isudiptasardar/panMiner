@@ -130,11 +130,12 @@ impl GraphBuilder {
                     node.genomes.insert(genome_id.clone());
                 }
             }
-            // Set is_contig_end if any gene in this cluster is at a contig boundary
+            // Track which genomes have this cluster at a contig boundary
             for gene_id in &cluster.genes {
                 if contig_end_gene_ids.contains(gene_id.as_str()) {
-                    node.is_contig_end = true;
-                    break;
+                    if let Some(genome_id) = gene_to_genome.get(gene_id.as_str()) {
+                        node.contig_end_genomes.insert(genome_id.clone());
+                    }
                 }
             }
             // Populate contig_sequences: prefer full contig DNA from GFF FASTA,
@@ -333,9 +334,9 @@ mod tests {
         let node_c2 = graph.nodes.get(&ClusterId::new("c2")).unwrap();
         let node_c3 = graph.nodes.get(&ClusterId::new("c3")).unwrap();
 
-        assert!(node_c1.is_contig_end, "first gene on contig should be marked as contig end");
-        assert!(node_c2.is_contig_end, "last gene on contig should be marked as contig end");
-        assert!(node_c3.is_contig_end, "sole gene on contig should be marked as contig end");
+        assert!(node_c1.contig_end_genomes.contains(&GenomeId::new("genome1")), "first gene on contig should be marked as contig end");
+        assert!(node_c2.contig_end_genomes.contains(&GenomeId::new("genome1")), "last gene on contig should be marked as contig end");
+        assert!(node_c3.contig_end_genomes.contains(&GenomeId::new("genome1")), "sole gene on contig should be marked as contig end");
     }
 
     #[test]
