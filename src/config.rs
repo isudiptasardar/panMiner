@@ -27,6 +27,8 @@ pub enum OutputFormat {
     Alignment,
     /// GML graph format (Cytoscape)
     Graph,
+    /// GFF3 output per genome (corrected annotations)
+    Gff,
     /// JSON/JSONL format
     Json,
     /// Parquet format (requires --features parquet)
@@ -45,6 +47,7 @@ impl std::fmt::Display for OutputFormat {
             OutputFormat::Matrix => write!(f, "matrix"),
             OutputFormat::Alignment => write!(f, "alignment"),
             OutputFormat::Graph => write!(f, "graph"),
+            OutputFormat::Gff => write!(f, "gff"),
             OutputFormat::Json => write!(f, "json"),
             OutputFormat::Parquet => write!(f, "parquet"),
             OutputFormat::HtmlViz => write!(f, "html"),

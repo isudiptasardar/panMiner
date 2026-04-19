@@ -5,6 +5,7 @@
 //! - Presence/absence matrix (CSV/TSV/Rtab)
 //! - Core/accessory alignments (ALN/FASTA)
 //! - GML graph format
+//! - GFF3 per-genome corrected annotations
 //! - Panaroo-style reference files (pan_genome_reference.fa, gene_data.csv)
 //! - JSON/JSONL
 //! - Parquet (optional)
@@ -14,6 +15,7 @@
 mod matrix;
 mod alignment;
 mod graph;
+mod gff;
 mod json;
 mod struct_csv;
 mod sv_matrix;
@@ -29,6 +31,7 @@ pub mod qc_viz;
 pub use matrix::MatrixWriter;
 pub use alignment::AlignmentWriter;
 pub use graph::GmlWriter;
+pub use gff::write_gff_files;
 pub use json::JsonWriter;
 pub use struct_csv::write_structural_variants;
 pub use sv_matrix::SVMatrixWriter;
@@ -100,6 +103,7 @@ impl OutputWriter {
             codon_alignment: None,
             bmge_alignment: None,
             graph: None,
+            gff: None,
             reference_fasta: None,
             gene_data: None,
             dna_fasta: None,
@@ -216,6 +220,16 @@ impl OutputWriter {
                     paths.graph = Some(path);
                     tracing::info!("Wrote final GML graph");
                 }
+                OutputFormat::Gff => {
+                    let gff_dir = self.output_dir.join("gff");
+                    match write_gff_files(graph, &self.output_dir) {
+                        Ok(written) => {
+                            paths.gff = Some(gff_dir);
+                            tracing::info!("Wrote {} GFF3 files for corrected annotations", written.len());
+                        }
+                        Err(e) => tracing::warn!("Failed to write GFF3 files: {}", e),
+                    }
+                }
                 OutputFormat::Json => {
                     // Panaroo-style JSON output with gene_data.csv and pan_genome_reference.fa
                     let gene_data_path = self.output_dir.join("gene_data.csv");
@@ -327,6 +341,8 @@ pub struct OutputPaths {
     pub bmge_alignment: Option<PathBuf>,
     /// Final pangenome graph (GML)
     pub graph: Option<PathBuf>,
+    /// GFF3 output directory (per-genome corrected annotations)
+    pub gff: Option<PathBuf>,
     /// Panaroo-style reference FASTA (all genes)
     pub reference_fasta: Option<PathBuf>,
     /// Gene data CSV (links gene sequences to annotations)

@@ -17,8 +17,10 @@ mod mds;
 mod ggcat;
 mod ggcaller;
 mod subprocess;
+pub mod extract_gene;
 
 pub use mmap::MmapFile;
+pub use extract_gene::extract_gene;
 pub use gff::GffParser;
 pub use fasta::FastaParser;
 pub use compress::{CompressedWriter, CompressedReader};

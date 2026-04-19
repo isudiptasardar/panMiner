@@ -107,7 +107,7 @@ struct Cli {
     #[arg(short, long)]
     verbose: bool,
 
-    /// Output formats (comma-separated: matrix,alignment,graph,json)
+    /// Output formats (comma-separated: matrix,alignment,graph,gff,json)
     #[arg(long, default_value = "matrix,alignment,graph")]
     formats: String,
 
@@ -219,6 +219,26 @@ enum Commands {
         verbose: bool,
     },
 
+    /// Extract gene sequences for a specific cluster
+    #[command(name = "extract-gene")]
+    ExtractGene {
+        /// PanMiner output directory
+        #[arg(short = 'i', long)]
+        input: PathBuf,
+
+        /// Cluster ID to extract
+        #[arg(long)]
+        cluster: String,
+
+        /// Output FASTA file
+        #[arg(short = 'o', long, default_value = "extracted_genes.fasta")]
+        output: PathBuf,
+
+        /// Extract protein sequences instead of DNA
+        #[arg(long)]
+        protein: bool,
+    },
+
     /// Run downstream analyses on PanMiner output
     #[command(name = "analyze")]
     Analyze {
@@ -314,6 +334,7 @@ fn parse_formats(s: &str) -> std::collections::HashSet<OutputFormat> {
             "matrix" => Some(OutputFormat::Matrix),
             "alignment" => Some(OutputFormat::Alignment),
             "graph" => Some(OutputFormat::Graph),
+            "gff" => Some(OutputFormat::Gff),
             "json" => Some(OutputFormat::Json),
             "parquet" => Some(OutputFormat::Parquet),
             "html" => Some(OutputFormat::HtmlViz),
@@ -478,6 +499,12 @@ fn main() -> anyhow::Result<()> {
                     return Err(anyhow::anyhow!("{}", e));
                 }
             }
+            tracing::info!("Done.");
+        }
+        Some(Commands::ExtractGene { input, cluster, output, protein }) => {
+            tracing::info!("PanMiner extract-gene v{}", panminer::VERSION);
+            panminer::io::extract_gene(&input, &cluster, &output, protein)?;
+            tracing::info!("Extracted sequences written to: {:?}", output);
             tracing::info!("Done.");
         }
         Some(Commands::Analyze { input, gwas, gwas_tool, phenotypes, panstripe, tree, amr, amr_database, organism, neighborhood, seed_gene, neighborhood_depth, accumulation, num_samples, export_grapetree, export_itol, verbose }) => {
