@@ -14,11 +14,14 @@ pub trait Clusterer {
     ///
     /// * `genes` - Genes to cluster
     /// * `identity_threshold` - Minimum identity for clustering (0.0-1.0)
+    /// * `len_dif_percent` - Minimum length coverage for clustering (0.0-1.0).
+    ///   Gene pairs with relative length difference > (1 - len_dif_percent) are excluded.
+    ///   Matches CD-HIT's `-s` parameter.
     ///
     /// # Returns
     ///
     /// A vector of gene clusters.
-    fn cluster(&self, genes: &[Gene], identity_threshold: f32) -> Result<Vec<GeneCluster>>;
+    fn cluster(&self, genes: &[Gene], identity_threshold: f32, len_dif_percent: f32) -> Result<Vec<GeneCluster>>;
 
     /// Get the name of this clustering backend.
     fn name(&self) -> &str;

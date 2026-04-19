@@ -152,6 +152,10 @@ pub struct PanminerConfig {
     // Clustering
     /// Identity threshold for initial clustering (default: 0.98)
     pub cluster_identity: f32,
+    /// Length difference cutoff for clustering (0.0-1.0, default 0.98).
+    /// Gene pairs with relative length difference > (1 - len_dif_percent) are excluded.
+    /// Matches CD-HIT's -s parameter.
+    pub len_dif_percent: f32,
     /// Enable MMseqs2 clustering (default: true)
     pub enable_mmseqs: bool,
     /// Path to MMseqs2 binary (None = auto-detect)
@@ -168,8 +172,8 @@ pub struct PanminerConfig {
     pub mode: CorrectionMode,
     /// Contamination removal threshold
     pub contamination_threshold: usize,
-    /// Gene family collapse threshold (default: 0.70)
-    pub collapse_threshold: f32,
+    /// Iterative collapsing thresholds (high to low). Default: [0.99, 0.95, 0.9, 0.8, 0.7]
+    pub collapse_thresholds: Vec<f32>,
 
     // Pre-processing QC
     /// Enable pre-processing QC (Mash/CheckM)
@@ -242,13 +246,14 @@ impl Default for PanminerConfig {
             chunk_size: 100,
             compression_level: 3,
             cluster_identity: 0.98,
+            len_dif_percent: 0.98,
             enable_mmseqs: true,
             mmseqs_path: None,
             prefer_gpu: true,
             min_support: 1,
             mode: CorrectionMode::Default,
             contamination_threshold: 2,
-            collapse_threshold: 0.70,
+            collapse_thresholds: vec![0.99, 0.95, 0.9, 0.8, 0.7],
             enable_qc: true,
             qc_mode: QcMode::Default,
             checkm_database_path: None,
@@ -336,6 +341,12 @@ impl PanminerConfig {
         self
     }
 
+    /// Set iterative collapsing thresholds (high to low).
+    pub fn with_collapse_thresholds(mut self, thresholds: Vec<f32>) -> Self {
+        self.collapse_thresholds = thresholds;
+        self
+    }
+
     /// Set output formats.
     pub fn with_outputs(mut self, outputs: HashSet<OutputFormat>) -> Self {
         self.outputs = outputs;
@@ -345,6 +356,12 @@ impl PanminerConfig {
     /// Enable or disable MMseqs2 clustering.
     pub fn with_enable_mmseqs(mut self, enable: bool) -> Self {
         self.enable_mmseqs = enable;
+        self
+    }
+
+    /// Set length difference cutoff for clustering (0.0-1.0).
+    pub fn with_len_dif_percent(mut self, percent: f32) -> Self {
+        self.len_dif_percent = percent;
         self
     }
 
@@ -475,6 +492,13 @@ impl PanminerConfig {
             )));
         }
 
+        if self.len_dif_percent < 0.0 || self.len_dif_percent > 1.0 {
+            return Err(crate::Error::Config(format!(
+                "len_dif_percent must be between 0.0 and 1.0, got {}",
+                self.len_dif_percent
+            )));
+        }
+
         if self.compression_level < 1 || self.compression_level > 22 {
             return Err(crate::Error::Config(format!(
                 "compression_level must be between 1 and 22, got {}",
@@ -482,11 +506,13 @@ impl PanminerConfig {
             )));
         }
 
-        if self.collapse_threshold < 0.0 || self.collapse_threshold > 1.0 {
-            return Err(crate::Error::Config(format!(
-                "collapse_threshold must be between 0.0 and 1.0, got {}",
-                self.collapse_threshold
-            )));
+        for (i, t) in self.collapse_thresholds.iter().enumerate() {
+            if *t < 0.0 || *t > 1.0 {
+                return Err(crate::Error::Config(format!(
+                    "collapse_thresholds[{}] must be between 0.0 and 1.0, got {}",
+                    i, t
+                )));
+            }
         }
 
         // Validate cDBG mode requirements
@@ -524,6 +550,7 @@ mod tests {
     fn test_default_config() {
         let config = PanminerConfig::default();
         assert_eq!(config.cluster_identity, 0.98);
+        assert_eq!(config.len_dif_percent, 0.98);
         assert_eq!(config.chunk_size, 100);
         assert!(config.enable_mmseqs);
     }
@@ -637,5 +664,31 @@ mod tests {
 
         let bad_config2 = PanminerConfig::new().with_compression_level(23); // too high (max 22)
         assert!(bad_config2.validate().is_err());
+    }
+
+    #[test]
+    fn test_len_dif_percent_validation() {
+        // Valid values
+        let config = PanminerConfig::new()
+            .with_input_files(vec![PathBuf::from("test.gff")])
+            .with_len_dif_percent(0.98);
+        assert!(config.validate().is_ok());
+
+        let config = PanminerConfig::new()
+            .with_input_files(vec![PathBuf::from("test.gff")])
+            .with_len_dif_percent(0.50);
+        assert!(config.validate().is_ok());
+
+        // Too low
+        let bad_config = PanminerConfig::new()
+            .with_input_files(vec![PathBuf::from("test.gff")])
+            .with_len_dif_percent(-0.1);
+        assert!(bad_config.validate().is_err());
+
+        // Too high
+        let bad_config = PanminerConfig::new()
+            .with_input_files(vec![PathBuf::from("test.gff")])
+            .with_len_dif_percent(1.5);
+        assert!(bad_config.validate().is_err());
     }
 }

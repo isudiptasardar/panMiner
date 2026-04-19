@@ -675,7 +675,7 @@ impl PanminerPipeline {
         if self.config.enable_mmseqs && !self.config.force_cpu {
             if let Some(runner) = MMseqsRunner::detect() {
                 tracing::info!("Using {} for clustering", runner.name());
-                return runner.cluster(genes, self.config.cluster_identity);
+                return runner.cluster(genes, self.config.cluster_identity, self.config.len_dif_percent);
             }
             tracing::info!("MMseqs2 not found, falling back to CPU clustering");
         }
@@ -683,7 +683,7 @@ impl PanminerPipeline {
         // CPU fallback
         let clusterer = CpuClusterer::new(self.config.effective_threads());
         tracing::info!("Using {} for clustering", clusterer.name());
-        clusterer.cluster(genes, self.config.cluster_identity)
+        clusterer.cluster(genes, self.config.cluster_identity, self.config.len_dif_percent)
     }
 
     /// Build the pangenome graph from clusters, genes, and contig DNA.
@@ -717,9 +717,9 @@ impl PanminerPipeline {
             .with_min_support(self.config.min_support);
         pruner.prune(graph)?;
 
-        // Fragment merging with actual cluster centroid sequences
+        // Fragment merging with iterative multi-threshold collapsing
         let merger = FragmentMerger::new()
-            .with_collapse_threshold(self.config.collapse_threshold);
+            .with_collapse_thresholds(self.config.collapse_thresholds.clone());
 
         // Build sequences HashMap from graph nodes (centroids from clusters)
         let sequences: std::collections::HashMap<String, Vec<u8>> = graph
@@ -739,11 +739,29 @@ impl PanminerPipeline {
             tracing::warn!("No centroid sequences available for fragment merging");
         }
 
-        // Create distance cache for reuse across correction passes (matches Panaroo Step 7→10)
+        // Create distance cache for reuse across correction passes (matches Panaroo Step 7->10)
         let mut distance_cache = DistanceCache::new();
 
+        // Mistranslation correction stays at identity 0.99 (unchanged)
         merger.correct_mistranslations(graph, &sequences)?;
-        merger.collapse_gene_families_with_cache(graph, &sequences, Some(&mut distance_cache))?;
+
+        // Iterative gene family collapsing from high to low threshold
+        // (matches Panaroo's progressive collapse_families behavior)
+        let mut total_collapsed = 0usize;
+        for threshold in merger.collapse_thresholds() {
+            let collapsed = merger.collapse_gene_families_with_threshold(
+                graph, &sequences, *threshold, Some(&mut distance_cache)
+            )?;
+            total_collapsed += collapsed;
+            if collapsed == 0 {
+                break; // No more merges possible at this threshold
+            }
+        }
+        tracing::info!(
+            "Iterative gene family collapsing: {} total merges across {} thresholds",
+            total_collapsed,
+            self.config.collapse_thresholds.len()
+        );
 
         // Phase 4.5: Missing gene recovery (optional)
         // This searches for genes that may have been missed during annotation
@@ -766,8 +784,21 @@ impl PanminerPipeline {
             .collect();
 
         let merger2 = FragmentMerger::new()
-            .with_collapse_threshold(self.config.collapse_threshold);
-        merger2.collapse_gene_families_with_cache(graph, &sequences_after_recovery, Some(&mut distance_cache))?;
+            .with_collapse_thresholds(self.config.collapse_thresholds.clone());
+        let mut total_recollapsed = 0usize;
+        for threshold in merger2.collapse_thresholds() {
+            let collapsed = merger2.collapse_gene_families_with_threshold(
+                graph, &sequences_after_recovery, *threshold, Some(&mut distance_cache)
+            )?;
+            total_recollapsed += collapsed;
+            if collapsed == 0 {
+                break;
+            }
+        }
+        tracing::info!(
+            "Post-recovery re-collapsing: {} total merges",
+            total_recollapsed
+        );
 
         // Phase 4.7: Misassembly edge cleaning
         let cleaner = MisassemblyEdgeCleaner::from_mode(&self.config.mode, num_genomes);

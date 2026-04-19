@@ -38,6 +38,11 @@ struct Cli {
     #[arg(long, default_value = "0.98")]
     identity: f32,
 
+    /// Length difference cutoff for clustering (0.0-1.0).
+    /// Gene pairs with relative length difference > (1 - len_dif_percent) are excluded.
+    #[arg(long, default_value = "0.98")]
+    len_dif_percent: f32,
+
     /// Correction mode: strict, default, sensitive
     #[arg(long, default_value = "default")]
     mode: String,
@@ -133,6 +138,10 @@ struct Cli {
     /// k-mer size for cDBG construction (only used with --pipeline-mode dbg)
     #[arg(long, default_value = "31")]
     kmer_size: usize,
+
+    /// Collapsing thresholds (comma-separated, high to low)
+    #[arg(long, default_value = "0.99,0.95,0.9,0.8,0.7")]
+    collapse_thresholds: String,
 }
 
 /// Subcommands for PanMiner.
@@ -680,6 +689,7 @@ fn main() -> anyhow::Result<()> {
                 .force_cpu(cli.force_cpu)
                 .with_enable_mmseqs(!cli.no_mmseqs2)
                 .with_prefer_gpu(!cli.no_gpu)
+                .with_len_dif_percent(cli.len_dif_percent)
                 .with_enable_qc(!cli.no_qc)
                 .with_qc_mode(parse_qc_mode(&cli.qc_mode))
                 .with_reannotate(cli.reannotate)
@@ -690,6 +700,15 @@ fn main() -> anyhow::Result<()> {
                 .with_codons(cli.codons)
                 .with_run_gwas(cli.gwas)
                 .with_filter_method(parse_filter_method(&cli.filter_alignment));
+
+            // Parse collapsing thresholds (comma-separated, high to low)
+            let collapse_thresholds: Vec<f32> = cli.collapse_thresholds
+                .split(',')
+                .filter_map(|s| s.trim().parse().ok())
+                .collect();
+            if !collapse_thresholds.is_empty() {
+                config = config.with_collapse_thresholds(collapse_thresholds);
+            }
 
             if let Some(phenotype) = cli.phenotype {
                 config = config.with_phenotype_file(phenotype);

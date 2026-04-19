@@ -112,6 +112,7 @@ impl MMseqsRunner {
         input: &Path,
         output: &Path,
         identity: f32,
+        len_dif_percent: f32,
     ) -> Result<PathBuf> {
         let mut cmd = Command::new(&self.path);
 
@@ -121,6 +122,10 @@ impl MMseqsRunner {
             .arg(&self.tmp_dir)
             .arg("--min-seq-id")
             .arg(format!("{}", identity))
+            .arg("--cov-mode")
+            .arg("1")        // Coverage relative to shorter sequence
+            .arg("-c")
+            .arg(len_dif_percent.to_string())  // Min sequence coverage
             .arg("--cluster-mode")
             .arg("2"); // Set cover (greedy)
 
@@ -199,14 +204,14 @@ impl MMseqsRunner {
 }
 
 impl Clusterer for MMseqsRunner {
-    fn cluster(&self, genes: &[Gene], identity_threshold: f32) -> Result<Vec<GeneCluster>> {
+    fn cluster(&self, genes: &[Gene], identity_threshold: f32, len_dif_percent: f32) -> Result<Vec<GeneCluster>> {
         // Write genes to FASTA file
         let input_file = self.tmp_dir.join("input.fasta");
         write_genes_to_fasta(genes, &input_file)?;
 
         // Run clustering
         let output_dir = self.tmp_dir.join("clusters");
-        let _clusters = self.easy_cluster(&input_file, &output_dir, identity_threshold)?;
+        let _clusters = self.easy_cluster(&input_file, &output_dir, identity_threshold, len_dif_percent)?;
 
         // Parse cluster output with gene sequences to set centroids
         self.parse_cluster_output(&output_dir, genes)
