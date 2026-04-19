@@ -2,7 +2,9 @@
 //!
 //! Compares nearby genes at the nucleotide level and merges
 //! clusters with identical DNA sequences (>=95% coverage, >=99% identity).
-//! Also collapses gene families sharing common neighbors at 70% threshold.
+//! Also collapses gene families sharing common neighbors at configurable
+//! thresholds, iterating from high to low identity (matching Panaroo's
+//! progressive collapsing behavior).
 
 use std::collections::{HashMap, HashSet};
 
@@ -65,8 +67,8 @@ pub struct FragmentMerger {
     coverage_threshold: f32,
     /// Minimum identity for mistranslation correction (default: 0.99)
     identity_threshold: f32,
-    /// Threshold for gene family collapsing (default: 0.70)
-    collapse_threshold: f32,
+    /// Thresholds for iterative gene family collapsing, high to low (default: [0.99, 0.95, 0.9, 0.8, 0.7])
+    collapse_thresholds: Vec<f32>,
     /// BFS depth for neighbor search (default: 3, matching Panaroo)
     bfs_depth: usize,
 }
@@ -77,14 +79,20 @@ impl FragmentMerger {
         Self {
             coverage_threshold: 0.95,
             identity_threshold: 0.99,
-            collapse_threshold: 0.70,
+            collapse_thresholds: vec![0.99, 0.95, 0.9, 0.8, 0.7],
             bfs_depth: 3,
         }
     }
 
-    /// Set the collapse threshold for gene family merging.
+    /// Set custom collapsing thresholds (high to low).
+    pub fn with_collapse_thresholds(mut self, thresholds: Vec<f32>) -> Self {
+        self.collapse_thresholds = thresholds;
+        self
+    }
+
+    /// Backward-compatible: set a single collapsing threshold.
     pub fn with_collapse_threshold(mut self, threshold: f32) -> Self {
-        self.collapse_threshold = threshold;
+        self.collapse_thresholds = vec![threshold];
         self
     }
 
@@ -92,6 +100,11 @@ impl FragmentMerger {
     pub fn with_bfs_depth(mut self, depth: usize) -> Self {
         self.bfs_depth = depth;
         self
+    }
+
+    /// Get the configured collapsing thresholds.
+    pub fn collapse_thresholds(&self) -> &[f32] {
+        &self.collapse_thresholds
     }
 
     /// Run mistranslation correction on the graph with BFS neighbor search.
@@ -168,10 +181,28 @@ impl FragmentMerger {
     ///
     /// When a cache is provided, computed distances are stored for reuse
     /// in subsequent passes (matching Panaroo's distance matrix reuse).
+    /// Uses the first threshold from `collapse_thresholds` for backward
+    /// compatibility with single-threshold callers.
     pub fn collapse_gene_families_with_cache(
         &self,
         graph: &ConcurrentGraph,
         sequences: &HashMap<String, Vec<u8>>,
+        cache: Option<&mut DistanceCache>,
+    ) -> Result<usize> {
+        let threshold = self.collapse_thresholds.first().copied().unwrap_or(0.7);
+        self.collapse_gene_families_with_threshold(graph, sequences, threshold, cache)
+    }
+
+    /// Collapse gene families at a specific threshold.
+    ///
+    /// This is the core collapsing routine. Callers (e.g., the pipeline)
+    /// iterate over multiple thresholds from high to low, reusing the
+    /// same `DistanceCache` across iterations.
+    pub fn collapse_gene_families_with_threshold(
+        &self,
+        graph: &ConcurrentGraph,
+        sequences: &HashMap<String, Vec<u8>>,
+        threshold: f32,
         mut cache: Option<&mut DistanceCache>,
     ) -> Result<usize> {
         let mut collapsed = 0;
@@ -189,6 +220,11 @@ impl FragmentMerger {
                 for j in (i + 1)..group.len() {
                     let id_a = &cluster_ids[group[i]];
                     let id_b = &cluster_ids[group[j]];
+
+                    // Skip if either node was already merged
+                    if graph.nodes.get(id_a).is_none() || graph.nodes.get(id_b).is_none() {
+                        continue;
+                    }
 
                     // Check if they share a neighbor (skip if not connected)
                     if !self.share_neighbor(graph, id_a, id_b) {
@@ -218,7 +254,7 @@ impl FragmentMerger {
                         }
                     };
 
-                    if identity >= self.collapse_threshold {
+                    if identity >= threshold {
                         // Merge the node with lower support into the one with higher support
                         let support_a = graph.nodes.get(id_a).map(|n| n.support).unwrap_or(0);
                         let support_b = graph.nodes.get(id_b).map(|n| n.support).unwrap_or(0);
@@ -234,7 +270,7 @@ impl FragmentMerger {
             }
         }
 
-        tracing::info!("Gene family collapsing: collapsed {} clusters", collapsed);
+        tracing::info!("Gene family collapsing (threshold={:.2}): collapsed {} clusters", threshold, collapsed);
         Ok(collapsed)
     }
 
@@ -476,5 +512,68 @@ mod tests {
         // Depth 3: a's neighbors are {b, c, d}
         let depth3 = merger.collect_neighbors_at_depth(&graph, &ClusterId::new("a"), 3);
         assert_eq!(depth3.len(), 3);
+    }
+
+    #[test]
+    fn test_iterative_collapse_merges_progressively() {
+        use crate::graph::{Node, GeneCluster, GenomeId};
+
+        let graph = ConcurrentGraph::with_capacity(10);
+
+        // Create three clusters: c1 and c2 have identical sequences and
+        // share a common neighbor (c3). The collapse method requires clusters
+        // to share a common neighbor before merging.
+        let seq = b"ATCGATCGATCGATCGATCGATCGATCGATCG".to_vec(); // 32 bases
+        let seq3 = b"GGCCCCGGGGCCCCGGGGCCCCGGGGCCCCGG".to_vec(); // different sequence for c3
+
+        let nodes = vec![
+            Node::from_cluster(&{ let mut c = GeneCluster::new("c1"); c.support = 10; c }),
+            Node::from_cluster(&{ let mut c = GeneCluster::new("c2"); c.support = 5; c }),
+            Node::from_cluster(&{ let mut c = GeneCluster::new("c3"); c.support = 8; c }),
+        ];
+        for node in nodes {
+            graph.add_node(node);
+        }
+
+        // c3 is a common neighbor of both c1 and c2
+        graph.add_edge_genome(ClusterId::new("c1"), ClusterId::new("c3"), GenomeId::new("g1"));
+        graph.add_edge_genome(ClusterId::new("c2"), ClusterId::new("c3"), GenomeId::new("g1"));
+
+        let mut sequences = HashMap::new();
+        sequences.insert("c1".to_string(), seq.clone());
+        sequences.insert("c2".to_string(), seq);
+        sequences.insert("c3".to_string(), seq3);
+
+        let merger = FragmentMerger::new()
+            .with_collapse_thresholds(vec![0.99, 0.95, 0.9, 0.8, 0.7]);
+
+        // At threshold 0.99, identical sequences (c1+c2) should merge
+        let mut cache = DistanceCache::new();
+        let merged_099 = merger.collapse_gene_families_with_threshold(
+            &graph, &sequences, 0.99, Some(&mut cache)
+        ).unwrap();
+        assert!(merged_099 >= 1, "At least 1 merge at 0.99 (identical sequences)");
+
+        // The cache should have entries after collapsing
+        assert!(!cache.is_empty(), "DistanceCache should have entries after collapsing");
+    }
+
+    #[test]
+    fn test_with_collapse_threshold_backward_compat() {
+        let merger = FragmentMerger::new().with_collapse_threshold(0.5);
+        assert_eq!(merger.collapse_thresholds(), &[0.5]);
+    }
+
+    #[test]
+    fn test_with_collapse_thresholds_multi() {
+        let merger = FragmentMerger::new()
+            .with_collapse_thresholds(vec![0.99, 0.95, 0.9, 0.8, 0.7]);
+        assert_eq!(merger.collapse_thresholds(), &[0.99, 0.95, 0.9, 0.8, 0.7]);
+    }
+
+    #[test]
+    fn test_default_collapse_thresholds() {
+        let merger = FragmentMerger::new();
+        assert_eq!(merger.collapse_thresholds(), &[0.99, 0.95, 0.9, 0.8, 0.7]);
     }
 }
