@@ -499,12 +499,12 @@ mod tests {
         let mut para1 = GeneCluster::new("para1");
         para1.support = 3;
         para1.is_paralog = true;
-        para1.centroid = Some(b"ATCGATCGATCGATCG".to_vec());
+        para1.centroids = vec![b"ATCGATCGATCGATCG".to_vec()];
 
         let mut para2 = GeneCluster::new("para2");
         para2.support = 2;
         para2.is_paralog = true;
-        para2.centroid = Some(b"ATCGATCGATCGATCG".to_vec());
+        para2.centroids = vec![b"ATCGATCGATCGATCG".to_vec()];
 
         // Shared neighbors: x and y
         let mut node_x = GeneCluster::new("x");

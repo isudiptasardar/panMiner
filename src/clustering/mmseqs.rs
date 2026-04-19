@@ -190,7 +190,7 @@ impl MMseqsRunner {
         // Set centroid sequences from the representative gene
         for cluster in clusters.values_mut() {
             if let Some(seq) = gene_sequences.get(cluster.id.as_str()) {
-                cluster.centroid = Some(seq.clone());
+                cluster.centroids = vec![seq.clone()];
             }
         }
 

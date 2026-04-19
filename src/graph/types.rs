@@ -144,8 +144,8 @@ pub struct GeneCluster {
     pub id: ClusterId,
     /// Genes in this cluster
     pub genes: Vec<GeneId>,
-    /// Centroid sequence (representative)
-    pub centroid: Option<Sequence>,
+    /// Centroid sequences (representative)
+    pub centroids: Vec<Sequence>,
     /// Whether this cluster contains paralogs
     pub is_paralog: bool,
     /// Number of genomes containing this cluster
@@ -158,7 +158,7 @@ impl GeneCluster {
         Self {
             id: ClusterId::new(id),
             genes: Vec::new(),
-            centroid: None,
+            centroids: vec![],
             is_paralog: false,
             support: 0,
         }
@@ -223,7 +223,7 @@ impl Node {
             annotations: HashSet::new(),
             is_paralog: cluster.is_paralog,
             is_highly_variable: false,
-            centroid_sequence: cluster.centroid.clone(),
+            centroid_sequence: cluster.centroids.first().cloned(),
             is_contig_end: false,
             contig_sequences: HashMap::new(),
             gene_members: HashMap::new(),
@@ -517,11 +517,25 @@ mod tests {
     #[test]
     fn test_node_from_cluster_with_centroid() {
         let mut cluster = GeneCluster::new("test_cluster");
-        cluster.centroid = Some(b"ATCGATCGATCGATCG".to_vec());
+        cluster.centroids = vec![b"ATCGATCGATCGATCG".to_vec()];
         cluster.support = 3;
 
         let node = Node::from_cluster(&cluster);
         assert_eq!(node.centroid_sequence, Some(b"ATCGATCGATCGATCG".to_vec()));
+    }
+
+    #[test]
+    fn test_gene_cluster_multiple_centroids() {
+        let cluster = GeneCluster {
+            id: ClusterId::new("cluster_0"),
+            genes: vec![GeneId::new("gene_0")],
+            centroids: vec![b"ATCG".to_vec(), b"GCTA".to_vec()],
+            is_paralog: false,
+            support: 1,
+        };
+        assert_eq!(cluster.centroids.len(), 2);
+        assert_eq!(cluster.centroids[0], b"ATCG".to_vec());
+        assert_eq!(cluster.centroids[1], b"GCTA".to_vec());
     }
 
     #[test]

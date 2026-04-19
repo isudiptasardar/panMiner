@@ -11,13 +11,13 @@ fn test_fragment_merger_with_real_sequences() {
     // Create two clusters with highly similar sequences (99% identity)
     let mut cluster_a = GeneCluster::new("cluster_a");
     cluster_a.genes.push(GeneId::new("gene_a1"));
-    cluster_a.centroid = Some(b"ATCGATCGATCGATCGATCGATCG".to_vec());
+    cluster_a.centroids = vec![b"ATCGATCGATCGATCGATCGATCG".to_vec()];
     cluster_a.support = 5;
 
     let mut cluster_b = GeneCluster::new("cluster_b");
     cluster_b.genes.push(GeneId::new("gene_b1"));
     // 99% identical to cluster_a (1 mismatch in 100 bases)
-    cluster_b.centroid = Some(b"ATCGATCGATCGATCGATCGATCA".to_vec()); // One mismatch
+    cluster_b.centroids = vec![b"ATCGATCGATCGATCGATCGATCA".to_vec()]; // One mismatch
     cluster_b.support = 3;
 
     // Build graph with both clusters
@@ -60,7 +60,7 @@ fn test_fragment_merger_no_sequences() {
     let graph = ConcurrentGraph::new();
     let mut node = Node::from_cluster(&{
         let mut c = GeneCluster::new("test");
-        c.centroid = None;
+        c.centroids = vec![];
         c.support = 2;
         c
     });
@@ -77,7 +77,7 @@ fn test_fragment_merger_no_sequences() {
 #[test]
 fn test_node_from_cluster_with_centroid() {
     let mut cluster = GeneCluster::new("test_cluster");
-    cluster.centroid = Some(b"ATCGATCGATCGATCG".to_vec());
+    cluster.centroids = vec![b"ATCGATCGATCGATCG".to_vec()];
     cluster.support = 3;
 
     let node = Node::from_cluster(&cluster);
@@ -103,12 +103,12 @@ fn test_fragment_merger_identical_sequences() {
     let graph = ConcurrentGraph::new();
 
     let mut cluster_a = GeneCluster::new("cluster_a");
-    cluster_a.centroid = Some(b"ATCGATCGATCGATCG".to_vec());
+    cluster_a.centroids = vec![b"ATCGATCGATCGATCG".to_vec()];
     cluster_a.support = 5;
     graph.add_node(Node::from_cluster(&cluster_a));
 
     let mut cluster_b = GeneCluster::new("cluster_b");
-    cluster_b.centroid = Some(b"ATCGATCGATCGATCG".to_vec()); // Identical
+    cluster_b.centroids = vec![b"ATCGATCGATCGATCG".to_vec()]; // Identical
     cluster_b.support = 3;
     graph.add_node(Node::from_cluster(&cluster_b));
 

@@ -71,7 +71,7 @@ impl CpuClusterer {
                 }
                 None => {
                     let mut new_cluster = GeneCluster::new(format!("cluster_{}", clusters.len()));
-                    new_cluster.centroid = Some(gene.sequence.clone());
+                    new_cluster.centroids = vec![gene.sequence.clone()];
                     new_cluster.add_gene(gene.id.clone());
                     new_cluster.support = 1;
                     centroids.push(&gene.sequence);

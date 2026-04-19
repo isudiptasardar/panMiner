@@ -318,12 +318,12 @@ mod tests {
     use super::*;
     use crate::graph::{GeneCluster, GenomeMetadata};
 
-    fn make_test_graph(nodes: Vec<(&str, usize, Option<Vec<u8>>)>) -> PangenomeGraph {
+    fn make_test_graph(nodes: Vec<(&str, usize, Vec<Vec<u8>>)>) -> PangenomeGraph {
         let mut graph = PangenomeGraph::new();
-        for (id, support, centroid) in nodes {
+        for (id, support, centroids) in nodes {
             let mut cluster = GeneCluster::new(id);
             cluster.support = support;
-            cluster.centroid = centroid;
+            cluster.centroids = centroids;
             let node = Node::from_cluster(&cluster);
             graph.add_node(node);
         }
@@ -346,8 +346,8 @@ mod tests {
     #[test]
     fn test_relabel_nodes() {
         let mut graph = make_test_graph(vec![
-            ("c1", 3, None),
-            ("c2", 5, None),
+            ("c1", 3, vec![]),
+            ("c2", 5, vec![]),
         ]);
         let mapping = relabel_nodes(&mut graph, 0);
         assert!(mapping.contains_key("c1"));
@@ -382,10 +382,10 @@ mod tests {
     #[test]
     fn test_cluster_centroids() {
         let mut graph1 = make_test_graph(vec![
-            ("c1", 3, Some(b"ATCGATCG".to_vec())),
+            ("c1", 3, vec![b"ATCGATCG".to_vec()]),
         ]);
         let mut graph2 = make_test_graph(vec![
-            ("c2", 5, Some(b"ATCGATCG".to_vec())), // identical to c1
+            ("c2", 5, vec![b"ATCGATCG".to_vec()]), // identical to c1
         ]);
 
         // Add genomes
