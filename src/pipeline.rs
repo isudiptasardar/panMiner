@@ -4,7 +4,7 @@ use rayon::prelude::*;
 use std::collections::HashMap;
 use std::path::PathBuf;
 
-use crate::config::{PanminerConfig, PipelineMode};
+use crate::config::{CorrectionMode, PanminerConfig, PipelineMode};
 use crate::clustering::{Clusterer, CpuClusterer, MMseqsRunner};
 use crate::correction::{ContaminationRemover, ContigEndPruner, FragmentMerger, MissingGeneRecoverer, MisassemblyEdgeCleaner, ParalogResolver, DistanceCache};
 use crate::error::{Error, Result};
@@ -854,14 +854,19 @@ impl PanminerPipeline {
         );
 
         // Perform missing gene recovery
+        // Enable consensus removal in strict mode: nodes where refound hits
+        // exceed original support are deleted (matches Panaroo's --remove_by_consensus)
+        let remove_by_consensus = matches!(self.config.mode, CorrectionMode::Strict);
         let recoverer = MissingGeneRecoverer::new()
             .with_min_identity(0.70)
-            .with_search_window(5000);
+            .with_search_window(5000)
+            .with_remove_by_consensus(remove_by_consensus);
 
         let stats = recoverer.recover(graph, &contig_sequences, &cluster_sequences)?;
         tracing::info!(
-            "Missing gene recovery: {} genes recovered",
-            stats.genes_recovered
+            "Missing gene recovery: {} genes recovered, {} nodes removed by consensus",
+            stats.genes_recovered,
+            stats.nodes_removed_by_consensus
         );
 
         Ok(())

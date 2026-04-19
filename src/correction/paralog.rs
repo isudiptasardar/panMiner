@@ -1,8 +1,9 @@
-//! Paralog resolution with synteny context.
+//! Paralog resolution with shortest-path distance and synteny context.
 //!
 //! Detects paralog clusters (same genome appears multiple times) and resolves
-//! them using shortest-path distance and context vector similarity (BFS depth 5),
-//! matching Panaroo's `collapse_paralogs` algorithm.
+//! them using shortest-path distance as the primary method (matching Panaroo's
+//! `nx.shortest_path_length`), with BFS context vector similarity (depth 5)
+//! as fallback when no path exists within `max_context` depth.
 //!
 //! Paralogs are flagged during clustering via `is_paralog`, then resolved here
 //! by comparing their graph neighborhoods. Paralog copies with similar synteny
@@ -13,6 +14,41 @@ use std::collections::{HashMap, HashSet, VecDeque};
 use crate::error::Result;
 use crate::graph::ConcurrentGraph;
 use crate::graph::{ClusterId, GenomeId, GeneCluster};
+
+/// Compute shortest path distance between two nodes using BFS.
+///
+/// Returns `Some(distance)` if a path exists within `max_depth` hops,
+/// or `None` if no path is found. Matching Panaroo's `nx.shortest_path_length`
+/// as the primary paralog resolution method.
+fn shortest_path_distance(
+    graph: &ConcurrentGraph,
+    from: &ClusterId,
+    to: &ClusterId,
+    max_depth: usize,
+) -> Option<usize> {
+    if from == to {
+        return Some(0);
+    }
+    let mut visited = HashSet::new();
+    let mut queue = VecDeque::new();
+    visited.insert(from.clone());
+    queue.push_back((from.clone(), 0usize));
+
+    while let Some((current, depth)) = queue.pop_front() {
+        if depth >= max_depth {
+            continue;
+        }
+        for neighbor in graph.neighbors(&current) {
+            if neighbor == *to {
+                return Some(depth + 1);
+            }
+            if visited.insert(neighbor.clone()) {
+                queue.push_back((neighbor, depth + 1));
+            }
+        }
+    }
+    None
+}
 
 /// Resolves paralog clusters by comparing synteny context
 /// and merging copies that share similar neighborhoods.
@@ -88,9 +124,11 @@ impl ParalogResolver {
 
     /// Merge paralog copies that share the same synteny context.
     ///
-    /// Uses BFS context vectors to compute similarity between paralog nodes.
-    /// Nodes with similar neighborhoods (similarity > 0.5) and similar-length
-    /// centroid sequences (within 20%) are merged together.
+    /// Uses shortest-path distance as the primary resolution method (matching
+    /// Panaroo's `nx.shortest_path_length`), falling back to BFS context vector
+    /// similarity when no path exists within `max_context` depth. Nodes with
+    /// similar neighborhoods (score >= 0.5) and similar-length centroid sequences
+    /// (within 20%) are merged together.
     fn merge_by_context(
         &self,
         graph: &ConcurrentGraph,
@@ -122,20 +160,27 @@ impl ParalogResolver {
                     continue;
                 }
 
-                // Compute context similarity
-                if let (Some(ctx_a), Some(ctx_b)) =
+                // Primary: shortest-path distance (Panaroo's nx.shortest_path_length)
+                // Fallback: context vector similarity when no path exists
+                let similarity = if let Some(distance) =
+                    shortest_path_distance(graph, id_a, id_b, self.max_context)
+                {
+                    1.0 / (1.0 + distance as f64)
+                } else if let (Some(ctx_a), Some(ctx_b)) =
                     (context_vectors.get(id_a), context_vectors.get(id_b))
                 {
-                    let similarity = ctx_a.similarity(ctx_b);
+                    ctx_a.similarity(ctx_b)
+                } else {
+                    continue;
+                };
 
-                    // Merge if context similarity exceeds threshold
-                    if similarity >= 0.5 {
-                        // Merge lower-support node into higher-support node
-                        if node_a.support >= node_b.support {
-                            to_merge.push((id_a.clone(), id_b.clone()));
-                        } else {
-                            to_merge.push((id_b.clone(), id_a.clone()));
-                        }
+                // Merge if similarity exceeds threshold
+                if similarity >= 0.5 {
+                    // Merge lower-support node into higher-support node
+                    if node_a.support >= node_b.support {
+                        to_merge.push((id_a.clone(), id_b.clone()));
+                    } else {
+                        to_merge.push((id_b.clone(), id_a.clone()));
                     }
                 }
             }
@@ -495,7 +540,9 @@ mod tests {
     fn test_resolve_merges_similar_paralogs() {
         let graph = ConcurrentGraph::with_capacity(10);
 
-        // Two paralog nodes with similar neighborhoods should be merged
+        // Two paralog nodes with similar neighborhoods should be merged.
+        // With shortest-path as primary: direct edge gives distance 1,
+        // similarity = 1/(1+1) = 0.5, meeting the merge threshold.
         let mut para1 = GeneCluster::new("para1");
         para1.support = 3;
         para1.is_paralog = true;
@@ -522,14 +569,161 @@ mod tests {
         graph.add_edge_genome(ClusterId::new("para1"), ClusterId::new("y"), GenomeId::new("g1"));
         graph.add_edge_genome(ClusterId::new("para2"), ClusterId::new("x"), GenomeId::new("g2"));
         graph.add_edge_genome(ClusterId::new("para2"), ClusterId::new("y"), GenomeId::new("g2"));
+        // Direct edge between paralogs: shortest path = 1, similarity = 0.5
+        graph.add_edge_genome(ClusterId::new("para1"), ClusterId::new("para2"), GenomeId::new("g3"));
 
         let resolver = ParalogResolver::new();
         let stats = resolver.resolve(&graph).unwrap();
 
         assert_eq!(stats.paralogs_detected, 2);
-        // Should merge because similar context and identical centroid sequences
+        // Should merge because direct neighbors (distance 1, similarity 0.5)
         assert_eq!(stats.nodes_merged, 1);
         // After merge, should have 3 nodes (para1 absorbed para2)
         assert_eq!(graph.node_count(), 3);
+    }
+
+    #[test]
+    fn test_shortest_path_distance() {
+        let graph = ConcurrentGraph::with_capacity(10);
+
+        // Build linear graph: A -- B -- C
+        for id in ["A", "B", "C"] {
+            graph.add_node(Node::from_cluster(&{
+                let mut c = GeneCluster::new(id);
+                c.support = 1;
+                c
+            }));
+        }
+        graph.add_edge_genome(ClusterId::new("A"), ClusterId::new("B"), GenomeId::new("g1"));
+        graph.add_edge_genome(ClusterId::new("B"), ClusterId::new("C"), GenomeId::new("g1"));
+
+        // A -> C is 2 hops
+        assert_eq!(
+            shortest_path_distance(&graph, &ClusterId::new("A"), &ClusterId::new("C"), 5),
+            Some(2)
+        );
+        // A -> B is 1 hop
+        assert_eq!(
+            shortest_path_distance(&graph, &ClusterId::new("A"), &ClusterId::new("B"), 5),
+            Some(1)
+        );
+        // A -> A is 0 (same node)
+        assert_eq!(
+            shortest_path_distance(&graph, &ClusterId::new("A"), &ClusterId::new("A"), 5),
+            Some(0)
+        );
+        // D does not exist in the graph, so no path
+        assert_eq!(
+            shortest_path_distance(&graph, &ClusterId::new("A"), &ClusterId::new("D"), 5),
+            None
+        );
+        // C -> A is also 2 (undirected)
+        assert_eq!(
+            shortest_path_distance(&graph, &ClusterId::new("C"), &ClusterId::new("A"), 5),
+            Some(2)
+        );
+    }
+
+    #[test]
+    fn test_shortest_path_distance_depth_limit() {
+        let graph = ConcurrentGraph::with_capacity(10);
+
+        // Build: A -- B -- C -- D
+        for id in ["A", "B", "C", "D"] {
+            graph.add_node(Node::from_cluster(&{
+                let mut c = GeneCluster::new(id);
+                c.support = 1;
+                c
+            }));
+        }
+        graph.add_edge_genome(ClusterId::new("A"), ClusterId::new("B"), GenomeId::new("g1"));
+        graph.add_edge_genome(ClusterId::new("B"), ClusterId::new("C"), GenomeId::new("g1"));
+        graph.add_edge_genome(ClusterId::new("C"), ClusterId::new("D"), GenomeId::new("g1"));
+
+        // A -> D is 3 hops, reachable with max_depth=5
+        assert_eq!(
+            shortest_path_distance(&graph, &ClusterId::new("A"), &ClusterId::new("D"), 5),
+            Some(3)
+        );
+        // Not reachable with max_depth=2 (BFS stops before reaching D)
+        assert_eq!(
+            shortest_path_distance(&graph, &ClusterId::new("A"), &ClusterId::new("D"), 2),
+            None
+        );
+    }
+
+    #[test]
+    fn test_shortest_path_resolves_paralogs() {
+        let graph = ConcurrentGraph::with_capacity(10);
+
+        // Build graph where para1 and para2 are connected through a short path:
+        //   para1 -- bridge -- para2
+        // Shortest path distance = 2, so similarity = 1/(1+2) ≈ 0.33 < 0.5
+        // They should NOT be merged via shortest path alone.
+        //
+        // But if they share a direct neighbor (distance = 1):
+        //   para1 -- shared -- para2
+        // Then similarity = 1/(1+1) = 0.5, meeting the threshold.
+        let mut para1 = GeneCluster::new("para1");
+        para1.support = 3;
+        para1.is_paralog = true;
+        para1.centroids = vec![b"ATCGATCGATCGATCG".to_vec()];
+
+        let mut para2 = GeneCluster::new("para2");
+        para2.support = 2;
+        para2.is_paralog = true;
+        para2.centroids = vec![b"ATCGATCGATCGATCG".to_vec()];
+
+        let mut shared = GeneCluster::new("shared");
+        shared.support = 5;
+
+        graph.add_node(Node::from_cluster(&para1));
+        graph.add_node(Node::from_cluster(&para2));
+        graph.add_node(Node::from_cluster(&shared));
+
+        // Both paralogs directly connected to shared (distance = 1 each via shared)
+        // para1 -> shared -> para2: distance = 2, similarity = 1/3 ≈ 0.33
+        graph.add_edge_genome(ClusterId::new("para1"), ClusterId::new("shared"), GenomeId::new("g1"));
+        graph.add_edge_genome(ClusterId::new("para2"), ClusterId::new("shared"), GenomeId::new("g2"));
+
+        let resolver = ParalogResolver::new();
+        let stats = resolver.resolve(&graph).unwrap();
+
+        assert_eq!(stats.paralogs_detected, 2);
+        // Shortest path distance = 2, similarity = 0.33 < 0.5, so no merge
+        // Context vectors also will not help here (only 1 shared neighbor, 1 unique each)
+        assert_eq!(stats.nodes_merged, 0);
+    }
+
+    #[test]
+    fn test_shortest_path_direct_neighbor_paralogs() {
+        let graph = ConcurrentGraph::with_capacity(10);
+
+        // Build graph where para1 and para2 are directly connected (distance = 1):
+        //   para1 -- para2
+        // similarity = 1/(1+1) = 0.5, meeting the threshold.
+        let mut para1 = GeneCluster::new("para1");
+        para1.support = 3;
+        para1.is_paralog = true;
+        para1.centroids = vec![b"ATCGATCGATCGATCG".to_vec()];
+
+        let mut para2 = GeneCluster::new("para2");
+        para2.support = 2;
+        para2.is_paralog = true;
+        para2.centroids = vec![b"ATCGATCGATCGATCG".to_vec()];
+
+        graph.add_node(Node::from_cluster(&para1));
+        graph.add_node(Node::from_cluster(&para2));
+
+        // Direct edge: shortest path = 1, similarity = 0.5
+        graph.add_edge_genome(ClusterId::new("para1"), ClusterId::new("para2"), GenomeId::new("g1"));
+
+        let resolver = ParalogResolver::new();
+        let stats = resolver.resolve(&graph).unwrap();
+
+        assert_eq!(stats.paralogs_detected, 2);
+        // Direct neighbors: distance 1, similarity 0.5 >= 0.5, should merge
+        assert_eq!(stats.nodes_merged, 1);
+        assert_eq!(graph.node_count(), 1);
     }
 }
