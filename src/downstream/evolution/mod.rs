@@ -30,6 +30,8 @@
 
 //! Evolutionary model runners.
 pub mod panstripe;
+pub mod pangrowth;
 
 // Re-exports
 pub use panstripe::{PanstripeRunner, PanstripeResult};
+pub use pangrowth::{PangrowthRunner, PangrowthResult, OpennessClassification};

@@ -336,6 +336,14 @@ enum Commands {
         #[arg(long)]
         export_itol: bool,
 
+        /// Generate gene abundance visualization (HTML/D3.js)
+        #[arg(long)]
+        abundance: bool,
+
+        /// Run Pangrowth pangenome openness estimation
+        #[arg(long)]
+        pangrowth: bool,
+
         /// Verbose output
         #[arg(short, long)]
         verbose: bool,
@@ -398,6 +406,7 @@ fn parse_formats(s: &str) -> std::collections::HashSet<OutputFormat> {
             "html" => Some(OutputFormat::HtmlViz),
             "struct" => Some(OutputFormat::Struct),
             "svmatrix" => Some(OutputFormat::SVMatrix),
+            "abundance" => Some(OutputFormat::Abundance),
             _ => None,
         })
         .collect()
@@ -718,7 +727,7 @@ fn main() -> anyhow::Result<()> {
             }
             tracing::info!("Done.");
         }
-        Some(Commands::Analyze { input, gwas, gwas_tool, phenotypes, panstripe, tree, amr, amr_database, organism, neighborhood, seed_gene, neighborhood_depth, accumulation, num_samples, export_grapetree, export_itol, verbose }) => {
+        Some(Commands::Analyze { input, gwas, gwas_tool, phenotypes, panstripe, tree, amr, amr_database, organism, neighborhood, seed_gene, neighborhood_depth, accumulation, num_samples, export_grapetree, export_itol, abundance, pangrowth, verbose }) => {
             let filter = if verbose {
                 EnvFilter::new("debug")
             } else {
@@ -907,6 +916,117 @@ fn main() -> anyhow::Result<()> {
                     Err(e) => {
                         tracing::error!("GrapeTree export failed: {}", e);
                     }
+                }
+            }
+
+            // Pangrowth pangenome openness
+            if pangrowth {
+                if let Some(runner) = panminer::downstream::PangrowthRunner::detect() {
+                    let runner = runner.with_output_dir(downstream_dir.clone());
+                    match runner.run(&input) {
+                        Ok(result) => {
+                            result.write_to(&downstream_dir)?;
+                            tracing::info!("Pangrowth analysis complete: {}", result.summary());
+                        }
+                        Err(e) => {
+                            tracing::error!("Pangrowth analysis failed: {}", e);
+                        }
+                    }
+                } else {
+                    tracing::warn!("pangrowth is not installed. Install with: conda install -c bioconda pangrowth");
+                }
+            }
+
+            // Gene abundance visualization
+            if abundance {
+                tracing::info!("Generating gene abundance visualization");
+
+                let rtab_path = input.join("gene_presence_absence.Rtab");
+                if rtab_path.exists() {
+                    match std::fs::read_to_string(&rtab_path) {
+                        Ok(content) => {
+                            let mut lines = content.lines();
+                            let header = lines.next().unwrap_or("");
+                            let genome_names: Vec<&str> = header
+                                .split('\t')
+                                .skip(1) // skip "Gene" column
+                                .collect();
+                            let total_genomes = genome_names.len();
+
+                            // Compute presence counts: histogram of (n_genomes, n_gene_families)
+                            let mut count_histogram: std::collections::HashMap<usize, usize> =
+                                std::collections::HashMap::new();
+                            let mut total_clusters: usize = 0;
+
+                            // For rarefaction: track which genomes each gene appears in
+                            let mut gene_genome_sets: Vec<Vec<usize>> = Vec::new();
+
+                            for line in lines {
+                                let fields: Vec<&str> = line.split('\t').collect();
+                                if fields.len() < 2 {
+                                    continue;
+                                }
+                                let mut present_in: Vec<usize> = Vec::new();
+                                for (i, val) in fields.iter().skip(1).enumerate() {
+                                    if let Ok(v) = val.parse::<u8>() {
+                                        if v > 0 {
+                                            present_in.push(i);
+                                        }
+                                    }
+                                }
+                                let n = present_in.len();
+                                *count_histogram.entry(n).or_insert(0) += 1;
+                                total_clusters += 1;
+                                gene_genome_sets.push(present_in);
+                            }
+
+                            // Build sorted presence_counts
+                            let mut presence_counts: Vec<(usize, usize)> =
+                                count_histogram.into_iter().collect();
+                            presence_counts.sort_by_key(|&(n, _)| n);
+
+                            // Compute rarefaction data
+                            // Use a deterministic ordering: iterate over genome indices
+                            // and count cumulative unique genes as genomes are added
+                            let genome_order: Vec<usize> = (0..total_genomes).collect();
+                            let mut rarefaction_data: Vec<(usize, usize)> = Vec::new();
+                            let mut seen_genes: std::collections::HashSet<usize> =
+                                std::collections::HashSet::new();
+
+                            for (step, &genome_idx) in genome_order.iter().enumerate() {
+                                for (gene_idx, genomes) in gene_genome_sets.iter().enumerate() {
+                                    if genomes.contains(&genome_idx) {
+                                        seen_genes.insert(gene_idx);
+                                    }
+                                }
+                                rarefaction_data.push((step + 1, seen_genes.len()));
+                            }
+
+                            let output_path = downstream_dir.join("abundance_report.html");
+                            match panminer::output::AbundanceVizWriter::write_report(
+                                &presence_counts,
+                                &rarefaction_data,
+                                total_genomes,
+                                total_clusters,
+                                &output_path,
+                            ) {
+                                Ok(_) => {
+                                    tracing::info!("Abundance report written to: {:?}", output_path);
+                                }
+                                Err(e) => {
+                                    tracing::error!("Failed to write abundance report: {}", e);
+                                }
+                            }
+                        }
+                        Err(e) => {
+                            tracing::error!("Failed to read Rtab file: {}", e);
+                        }
+                    }
+                } else {
+                    tracing::warn!(
+                        "gene_presence_absence.Rtab not found in {:?}. Run PanMiner with --formats matrix first.",
+                        input
+                    );
                 }
             }
 

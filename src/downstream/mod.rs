@@ -28,6 +28,6 @@ pub use traits::{DownstreamInput, DownstreamResult, DownstreamRunner};
 
 // Re-export all runners
 pub use gwas::{PyseerRunner, Scoary2Runner, SpydrPickRunner};
-pub use evolution::PanstripeRunner;
+pub use evolution::{PanstripeRunner, PangrowthRunner};
 pub use resistome::AmrFinderRunner;
 pub use exploration::{GeneNeighborhoodExtractor, AccumulationCurveRunner, GrapeTreeExportRunner, ItolAnnotationRunner};
