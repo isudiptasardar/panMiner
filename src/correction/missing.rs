@@ -8,7 +8,7 @@
 use std::collections::HashMap;
 
 use crate::error::Result;
-use crate::graph::{ClusterId, ConcurrentGraph};
+use crate::graph::{ClusterId, ConcurrentGraph, GenomeId};
 use crate::correction::simd::align_semiglobal;
 
 /// Recovers genes missed by the initial annotation.
@@ -77,6 +77,8 @@ impl MissingGeneRecoverer {
     /// For each edge in the graph, checks if any genome is missing
     /// one of the connected genes. If so, searches the flanking
     /// contig sequence for a match using semi-global alignment.
+    /// When a hit is found, the genome is added to the target node's
+    /// membership (genomes and gene_members).
     ///
     /// When `remove_by_consensus` is enabled, any node where the
     /// refound hit count exceeds its original support is removed.
@@ -112,13 +114,24 @@ impl MissingGeneRecoverer {
                 continue;
             }
 
+            // Find genomes that have the from node but NOT the to node
+            let from_genomes: std::collections::HashSet<GenomeId> = from_node.unwrap().genomes.clone();
+            let to_genomes: std::collections::HashSet<GenomeId> = to_node.unwrap().genomes.clone();
+            let missing_genomes: Vec<GenomeId> = from_genomes
+                .difference(&to_genomes)
+                .cloned()
+                .collect();
+
+            if missing_genomes.is_empty() {
+                continue;
+            }
+
             // Get the query sequence for the missing gene
             let query_seq = match cluster_sequences.get(to.as_str()) {
                 Some(seq) => seq,
                 None => continue,
             };
 
-            // Search in contig sequences for each genome missing this gene
             if query_seq.len() < 10 {
                 continue;
             }
@@ -127,6 +140,19 @@ impl MissingGeneRecoverer {
             if self.search_in_contigs(query_seq, contig_sequences) {
                 recovered += 1;
                 *recovery_counts.entry(to.clone()).or_insert(0) += 1;
+
+                // Add missing genomes to the target node's membership
+                // This is what makes recovery actually modify the graph
+                if let Some(mut to_node) = graph.nodes.get_mut(to) {
+                    for genome_id in &missing_genomes {
+                        to_node.genomes.insert(genome_id.clone());
+                        to_node.gene_members
+                            .entry(genome_id.clone())
+                            .or_default()
+                            .push(format!("recovered_{}", to.as_str()));
+                    }
+                    to_node.support = to_node.genomes.len();
+                }
             }
         }
 

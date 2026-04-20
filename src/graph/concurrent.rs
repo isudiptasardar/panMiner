@@ -3,14 +3,17 @@
 use dashmap::DashMap;
 use rayon::prelude::*;
 use std::collections::HashSet;
+use std::sync::Mutex;
 
 use super::types::{ClusterId, Edge, EdgeKey, GenomeId, Node, PangenomeGraph};
 use crate::io::PartialGraph;
 
 /// Thread-safe pangenome graph using DashMap.
 ///
-/// This structure allows concurrent updates from multiple threads
-/// without explicit locking, using DashMap's lock-free design.
+/// Concurrent reads and single-key writes (add_node, add_edge_genome) are
+/// safe via DashMap's internal sharded locking. However, multi-step mutations
+/// (merge_nodes, remove_node) that touch multiple DashMap entries must be
+/// serialized through `merge_lock` to prevent race conditions.
 pub struct ConcurrentGraph {
     /// Nodes indexed by cluster ID
     pub nodes: DashMap<ClusterId, Node>,
@@ -18,6 +21,8 @@ pub struct ConcurrentGraph {
     pub edges: DashMap<EdgeKey, Edge>,
     /// Adjacency index: cluster_id -> set of neighbor cluster_ids (O(1) lookup)
     adjacency: DashMap<ClusterId, HashSet<ClusterId>>,
+    /// Serializes multi-step mutations (merge, remove) to prevent race conditions
+    merge_lock: Mutex<()>,
 }
 
 impl ConcurrentGraph {
@@ -27,6 +32,7 @@ impl ConcurrentGraph {
             nodes: DashMap::new(),
             edges: DashMap::new(),
             adjacency: DashMap::new(),
+            merge_lock: Mutex::new(()),
         }
     }
 
@@ -36,6 +42,7 @@ impl ConcurrentGraph {
             nodes: DashMap::with_capacity(capacity),
             edges: DashMap::with_capacity(capacity * 2), // Usually more edges than nodes
             adjacency: DashMap::with_capacity(capacity),
+            merge_lock: Mutex::new(()),
         }
     }
 
@@ -127,7 +134,10 @@ impl ConcurrentGraph {
 
     /// Remove a node and its connected edges (thread-safe).
     /// Uses the adjacency index for O(degree) instead of O(E).
+    /// Acquires merge_lock to serialize multi-step mutations.
     pub fn remove_node(&self, cluster_id: &ClusterId) {
+        let _guard = self.merge_lock.lock().unwrap();
+
         // Get neighbors from adjacency (O(1) lookup)
         let neighbors: Vec<ClusterId> = {
             if let Some(adj) = self.adjacency.get(cluster_id) {
@@ -163,7 +173,10 @@ impl ConcurrentGraph {
 
     /// Remove an edge from the graph (thread-safe).
     /// Updates the adjacency index for both endpoints.
+    /// Acquires merge_lock to serialize multi-step mutations.
     pub fn remove_edge(&self, from: &ClusterId, to: &ClusterId) -> Option<Edge> {
+        let _guard = self.merge_lock.lock().unwrap();
+
         // Update adjacency: remove each endpoint from the other's set
         if let Some(mut adj) = self.adjacency.get_mut(from) {
             adj.remove(to);
@@ -181,11 +194,16 @@ impl ConcurrentGraph {
         self.edges.remove(&key).map(|(_, edge)| edge)
     }
 
-    /// Remove multiple nodes in parallel.
+    /// Remove multiple nodes sequentially under the merge lock.
+    ///
+    /// This must be sequential (not parallel) because each removal
+    /// is a multi-step operation that must be serialized to prevent
+    /// race conditions on the adjacency index.
     pub fn remove_nodes_parallel(&self, nodes: &[ClusterId]) {
-        nodes.par_iter().for_each(|node| {
+        // Each remove_node acquires merge_lock internally
+        for node in nodes {
             self.remove_node(node);
-        });
+        }
     }
 
     /// Merge the source node into the target node.
@@ -194,10 +212,13 @@ impl ConcurrentGraph {
     /// merges the node data (support and annotations), and then deletes `source`.
     /// This preserves the contiguity of the graph during error correction.
     /// Uses the adjacency index for O(degree) instead of O(E).
+    /// Acquires merge_lock to prevent race conditions on multi-step mutations.
     pub fn merge_nodes(&self, target: &ClusterId, source: &ClusterId) {
         if target == source {
             return;
         }
+
+        let _guard = self.merge_lock.lock().unwrap();
 
         // Get source's neighbors from adjacency (O(1))
         let source_neighbors: Vec<ClusterId> = {
@@ -251,6 +272,12 @@ impl ConcurrentGraph {
                 target_node.is_highly_variable |= source_node.is_highly_variable;
                 target_node.centroid_sequences.extend(source_node.centroid_sequences);
                 target_node.contig_end_genomes.extend(source_node.contig_end_genomes);
+                // Merge gene members from source into target
+                for (genome_id, gene_ids) in source_node.gene_members {
+                    target_node.gene_members.entry(genome_id).or_default().extend(gene_ids);
+                }
+                // Merge genomes set
+                target_node.genomes.extend(source_node.genomes);
             });
         }
     }
@@ -262,9 +289,9 @@ impl ConcurrentGraph {
             .par_iter()
             .flat_map(|partial| {
                 // Convert adjacencies to edges
-                partial.adjacencies.par_iter().map(|(contig, from, to)| {
-                    // In real implementation, from/to would be cluster IDs
-                    (ClusterId::new(from), ClusterId::new(to), GenomeId::new(contig))
+                // Tuple format: (genome_id, from_cluster, to_cluster)
+                partial.adjacencies.par_iter().map(|(genome_id, from, to)| {
+                    (ClusterId::new(from), ClusterId::new(to), GenomeId::new(genome_id))
                 })
             })
             .for_each(|(from, to, genome)| {

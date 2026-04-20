@@ -21,6 +21,7 @@ use crate::correction::simd::align_sequences;
 #[derive(Debug, Clone, Default)]
 pub struct DistanceCache {
     /// Maps (cluster_a, cluster_b) → identity score
+    /// Keys are normalized so a < b lexicographically
     distances: HashMap<(String, String), f64>,
 }
 
@@ -32,22 +33,17 @@ impl DistanceCache {
 
     /// Insert a distance between two clusters (order-independent key).
     pub fn insert(&mut self, a: &str, b: &str, identity: f64) {
-        let key = if a < b {
-            (a.to_string(), b.to_string())
-        } else {
-            (b.to_string(), a.to_string())
-        };
+        let key = Self::normalize_key(a, b);
         self.distances.insert(key, identity);
     }
 
     /// Look up a cached distance between two clusters.
+    /// Avoids allocation by scanning entries with &str comparison.
     pub fn get(&self, a: &str, b: &str) -> Option<f64> {
-        let key = if a < b {
-            (a.to_string(), b.to_string())
-        } else {
-            (b.to_string(), a.to_string())
-        };
-        self.distances.get(&key).copied()
+        let (lo, hi) = Self::normalize_key_parts(a, b);
+        self.distances.iter()
+            .find(|((k1, k2), _)| k1.as_str() == lo && k2.as_str() == hi)
+            .map(|(_, v)| *v)
     }
 
     /// Get the number of cached distances.
@@ -58,6 +54,20 @@ impl DistanceCache {
     /// Check if the cache is empty.
     pub fn is_empty(&self) -> bool {
         self.distances.is_empty()
+    }
+
+    /// Normalize key so the smaller string is first (order-independent lookup).
+    fn normalize_key(a: &str, b: &str) -> (String, String) {
+        if a < b {
+            (a.to_string(), b.to_string())
+        } else {
+            (b.to_string(), a.to_string())
+        }
+    }
+
+    /// Returns (lo, hi) without allocating, for lookup.
+    fn normalize_key_parts<'a>(a: &'a str, b: &'a str) -> (&'a str, &'a str) {
+        if a < b { (a, b) } else { (b, a) }
     }
 }
 

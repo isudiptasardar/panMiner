@@ -71,8 +71,8 @@ impl BitPackedMatrix {
     /// * `present` - Whether the gene is present
     #[inline]
     pub fn set(&mut self, genome: usize, cluster: usize, present: bool) {
-        debug_assert!(genome < self.num_genomes);
-        debug_assert!(cluster < self.num_clusters);
+        assert!(genome < self.num_genomes, "genome index {} out of bounds (max {})", genome, self.num_genomes);
+        assert!(cluster < self.num_clusters, "cluster index {} out of bounds (max {})", cluster, self.num_clusters);
 
         let byte_idx = genome / 8;
         let bit_idx = genome % 8;
@@ -93,8 +93,8 @@ impl BitPackedMatrix {
     /// * `cluster` - Cluster index (row)
     #[inline]
     pub fn get(&self, genome: usize, cluster: usize) -> bool {
-        debug_assert!(genome < self.num_genomes);
-        debug_assert!(cluster < self.num_clusters);
+        assert!(genome < self.num_genomes, "genome index {} out of bounds (max {})", genome, self.num_genomes);
+        assert!(cluster < self.num_clusters, "cluster index {} out of bounds (max {})", cluster, self.num_clusters);
 
         let byte_idx = genome / 8;
         let bit_idx = genome % 8;
@@ -105,7 +105,7 @@ impl BitPackedMatrix {
 
     /// Count how many genomes have this cluster (row sum).
     pub fn count_present(&self, cluster: usize) -> usize {
-        debug_assert!(cluster < self.num_clusters);
+        assert!(cluster < self.num_clusters, "cluster index {} out of bounds (max {})", cluster, self.num_clusters);
 
         let row_start = cluster * self.bytes_per_row;
         let row = &self.data[row_start..row_start + self.bytes_per_row];
@@ -115,7 +115,7 @@ impl BitPackedMatrix {
 
     /// Count how many clusters a genome has (column sum).
     pub fn count_genome_clusters(&self, genome: usize) -> usize {
-        debug_assert!(genome < self.num_genomes);
+        assert!(genome < self.num_genomes, "genome index {} out of bounds (max {})", genome, self.num_genomes);
 
         let bit_idx = genome % 8;
         let mask = 1u8 << bit_idx;

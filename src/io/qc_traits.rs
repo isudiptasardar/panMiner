@@ -8,7 +8,7 @@ use crate::error::{Error, Result};
 use std::path::PathBuf;
 
 /// QC metrics for a single genome.
-#[derive(Debug, Clone, Default, serde::Serialize)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct GenomeQC {
     /// Genome ID
     pub genome_id: String,
@@ -26,6 +26,22 @@ pub struct GenomeQC {
     pub mash_distance: Option<f64>,
     /// Whether genome passed QC
     pub passed: bool,
+}
+
+impl Default for GenomeQC {
+    /// Default passes QC — the pipeline validates against thresholds.
+    fn default() -> Self {
+        Self {
+            genome_id: String::new(),
+            completeness: 0.0,
+            contamination: 0.0,
+            genome_size: 0,
+            num_contigs: 0,
+            n50: 0,
+            mash_distance: None,
+            passed: true,
+        }
+    }
 }
 
 /// QC mode - how strict the QC should be.
@@ -408,7 +424,7 @@ mod tests {
         assert_eq!(qc.genome_id, "");
         assert_eq!(qc.completeness, 0.0);
         assert_eq!(qc.contamination, 0.0);
-        // passed defaults to false, will be set by pipeline based on thresholds
-        assert!(!qc.passed);
+        // passed defaults to true — pipeline validates against thresholds
+        assert!(qc.passed);
     }
 }

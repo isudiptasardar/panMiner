@@ -16,7 +16,8 @@ pub struct PartialGraph {
     /// Chunk ID
     pub chunk_id: usize,
     /// Gene adjacencies (edges) as ClusterIds
-    pub adjacencies: Vec<(String, String, String)>, // (contig, from_cluster, to_cluster)
+    /// (genome_id, from_cluster, to_cluster)
+    pub adjacencies: Vec<(String, String, String)>,
     /// Genome IDs in this chunk
     pub genome_ids: Vec<String>,
 }
@@ -65,7 +66,19 @@ impl StreamingPipeline {
             .par_iter()
             .flat_map(|path| {
                 let genome_id = GenomeId::new(path.file_stem().and_then(|s| s.to_str()).unwrap_or("unknown"));
-                GffParser::open(path, genome_id).and_then(|p| p.parse_genes()).unwrap_or_default()
+                match GffParser::open(path, genome_id) {
+                    Ok(parser) => match parser.parse_genes() {
+                        Ok(genes) => genes,
+                        Err(e) => {
+                            tracing::warn!("Failed to parse genes from {:?}: {}", path, e);
+                            Vec::new()
+                        }
+                    },
+                    Err(e) => {
+                        tracing::warn!("Failed to open GFF file {:?}: {}", path, e);
+                        Vec::new()
+                    }
+                }
             })
             .collect();
 
@@ -76,14 +89,14 @@ impl StreamingPipeline {
         }
 
         let mut adjacencies = Vec::new();
-        for ((_genome, contig), mut genes) in contig_genes {
+        for ((genome, _contig), mut genes) in contig_genes {
             genes.sort_by_key(|g| g.start);
             for window in genes.windows(2) {
                 if let (Some(c1), Some(c2)) = (
                     gene_to_cluster.get(&window[0].id.to_string()),
                     gene_to_cluster.get(&window[1].id.to_string()),
                 ) {
-                    adjacencies.push((contig.clone(), c1.clone(), c2.clone()));
+                    adjacencies.push((genome.clone(), c1.clone(), c2.clone()));
                 }
             }
         }

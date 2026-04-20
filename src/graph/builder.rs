@@ -114,7 +114,7 @@ impl GraphBuilder {
                 let contigs: HashSet<(GenomeId, String)> = cluster.genes.iter()
                     .filter_map(|gid| {
                         let genome = gene_to_genome.get(gid.as_str())?;
-                        let gene = genes.iter().find(|g| g.id == *gid)?;
+                        let gene = gene_data_map.get(gid)?;
                         Some((genome.clone(), gene.contig.clone()))
                     })
                     .collect();
@@ -205,18 +205,19 @@ impl GraphBuilder {
     /// Build a graph from pre-extracted adjacencies.
     ///
     /// This is used when loading from intermediate files.
+    /// The adjacencies tuple is (genome_id, from_cluster, to_cluster).
     pub fn build_from_adjacencies(
         &self,
-        adjacencies: &[(String, String, String)], // (contig, from_cluster, to_cluster)
+        adjacencies: &[(String, String, String)], // (genome_id, from_cluster, to_cluster)
         _genomes: &[GenomeId],
     ) -> ConcurrentGraph {
         let graph = ConcurrentGraph::new();
 
         // Add edges from adjacencies
-        adjacencies.par_iter().for_each(|(contig, from, to)| {
+        adjacencies.par_iter().for_each(|(genome_id, from, to)| {
             let from_cluster = ClusterId::new(from);
             let to_cluster = ClusterId::new(to);
-            let genome = GenomeId::new(contig); // Contig encodes genome
+            let genome = GenomeId::new(genome_id);
 
             graph.add_edge_genome(from_cluster, to_cluster, genome);
         });

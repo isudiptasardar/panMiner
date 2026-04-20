@@ -128,11 +128,14 @@ impl Gene {
     }
 
     /// Get the length of the gene.
+    ///
+    /// Returns 0 for unset coordinates (start=0, end=0).
+    /// Positions are 1-based inclusive, so a gene from 100 to 200 has length 101.
     pub fn length(&self) -> usize {
-        if self.end >= self.start {
-            self.end - self.start + 1
-        } else {
+        if self.start == 0 || self.end == 0 || self.end < self.start {
             0
+        } else {
+            self.end - self.start + 1
         }
     }
 }
@@ -170,8 +173,16 @@ impl GeneCluster {
     }
 
     /// Check if this cluster contains a specific gene.
+    ///
+    /// This is O(n) on the gene list. For hot-path membership checks,
+    /// use `build_gene_set()` to create a HashSet for O(1) lookups.
     pub fn contains(&self, gene_id: &GeneId) -> bool {
         self.genes.contains(gene_id)
+    }
+
+    /// Build a HashSet of gene IDs for O(1) membership lookups.
+    pub fn build_gene_set(&self) -> HashSet<GeneId> {
+        self.genes.iter().cloned().collect()
     }
 
     /// Get the number of genes in this cluster.
