@@ -9,9 +9,11 @@ use crate::clustering::{Clusterer, CpuClusterer, MMseqsRunner};
 use crate::correction::{ContaminationRemover, ContigEndPruner, FragmentMerger, MissingGeneRecoverer, MisassemblyEdgeCleaner, ParalogResolver, DistanceCache};
 use crate::error::{Error, Result};
 use crate::graph::{
-    BitPackedMatrix, ConcurrentGraph, Gene, GeneCluster, GeneId, Node, GenomeId, GraphBuilder, PangenomeGraph,
+    BitPackedMatrix, ConcurrentGraph, Gene, GeneCluster, Node, GenomeId, GraphBuilder, PangenomeGraph,
 };
-use crate::io::{FastaParser, GffParser, CheckmQcRunner, QcRunner, GenomeQC, BaktaRunner, is_genbank_file};
+#[cfg(feature = "prodigal")]
+use crate::graph::GeneId;
+use crate::io::{GffParser, CheckmQcRunner, QcRunner, GenomeQC, BaktaRunner, is_genbank_file};
 use crate::output::{OutputPaths, OutputWriter};
 use crate::output::qc_stats::{write_qc_stats, write_qc_summary};
 use crate::gwas::{PyseerRunner, GWASRunner};
@@ -116,10 +118,10 @@ impl PanminerPipeline {
         }
 
         // Phase 3: Build graph
-        let concurrent_graph = if self.config.chunk_size > 0 && self.config.input_files.len() > self.config.chunk_size {
+        let concurrent_graph = if self.config.chunk_size > 0 && input_files.len() > self.config.chunk_size {
             tracing::info!("Phase 3: Building pangenome graph (chunked streaming)");
             let streaming = crate::io::StreamingPipeline::new(self.config.clone());
-            let chunk_files = streaming.process_chunks_with_clusters(&self.config.input_files, &clusters)?;
+            let chunk_files = streaming.process_chunks_with_clusters(&input_files, &clusters)?;
 
             let graph = ConcurrentGraph::with_capacity(clusters.len());
 

@@ -50,10 +50,11 @@ impl GffParser {
         Ok(Self { mmap, genome_id })
     }
 
-    /// Parse all gene features from the GFF3 file.
+    /// Parse gene features from the GFF3 file.
     ///
-    /// This method extracts all features of type "gene" or "CDS"
-    /// and returns them as Gene objects.
+    /// Prefers CDS features when available. Falls back to gene features
+    /// only if no CDS features are found (some annotation tools produce
+    /// only gene-level features without CDS records).
     pub fn parse_genes(&self) -> Result<Vec<Gene>> {
         let (genes, _contigs) = self.parse_genes_and_contigs()?;
         Ok(genes)
@@ -82,21 +83,50 @@ impl GffParser {
         // Find line boundaries for GFF part
         let lines: Vec<&[u8]> = gff_bytes.split(|&b| b == b'\n').collect();
 
-        // Parse lines in parallel
-        let mut genes: Vec<Gene> = lines
+        // Parse all CDS and gene features in parallel.
+        // Prefer CDS features (they're more precise for protein-coding genes).
+        // Fall back to gene features only if no CDS features are found,
+        // to handle GFF files that only contain gene-level annotations.
+        let (cds_genes, gene_genes): (Vec<Gene>, Vec<Gene>) = lines
             .par_iter()
             .filter_map(|line| {
-                // Skip comments and empty lines
                 if line.starts_with(b"#") || line.is_empty() {
                     return None;
                 }
 
-                // Parse the GFF record
                 let record = self.parse_line(line)?;
-                let gene = record_to_gene(&record, &self.genome_id);
-                gene
+                let gene = record_to_gene(&record, &self.genome_id)?;
+                if record.feature_type == "CDS" {
+                    Some((Some(gene), None))
+                } else if record.feature_type == "gene" {
+                    Some((None, Some(gene)))
+                } else {
+                    None
+                }
             })
-            .collect();
+            .fold(
+                || (Vec::new(), Vec::new()),
+                |(mut cds, mut genes): (Vec<Gene>, Vec<Gene>), (cds_opt, gene_opt)| {
+                    if let Some(g) = cds_opt { cds.push(g); }
+                    if let Some(g) = gene_opt { genes.push(g); }
+                    (cds, genes)
+                },
+            )
+            .reduce(
+                || (Vec::new(), Vec::new()),
+                |(mut cds_a, mut genes_a), (cds_b, genes_b)| {
+                    cds_a.extend(cds_b);
+                    genes_a.extend(genes_b);
+                    (cds_a, genes_a)
+                },
+            );
+
+        // Use CDS features if any were found; otherwise fall back to gene features
+        let mut genes = if !cds_genes.is_empty() {
+            cds_genes
+        } else {
+            gene_genes
+        };
 
         // Parse full contig DNA from FASTA section
         let mut contigs: HashMap<String, Vec<u8>> = HashMap::new();
@@ -209,9 +239,12 @@ fn parse_attributes(attrs: &[u8]) -> HashMap<String, String> {
 }
 
 /// Convert a GFF record to a Gene.
+///
+/// Only CDS and gene features are processed. The caller handles the preference
+/// logic: CDS features are preferred, but gene features are used as a fallback
+/// when no CDS features are present in the file.
 fn record_to_gene(record: &GffRecord, genome_id: &GenomeId) -> Option<Gene> {
-    // Only process gene and CDS features
-    if record.feature_type != "gene" && record.feature_type != "CDS" {
+    if record.feature_type != "CDS" && record.feature_type != "gene" {
         return None;
     }
 
@@ -291,8 +324,10 @@ mod tests {
         let parser = GffParser::open(temp.path(), GenomeId::new("test_genome"))?;
         let genes = parser.parse_genes().unwrap();
 
-        // Should have 3 gene/CDS features
-        assert_eq!(genes.len(), 3);
+        // CDS features are preferred over gene features.
+        // The test GFF has 2 gene features and 1 CDS feature → only CDS is kept.
+        assert_eq!(genes.len(), 1);
+        assert_eq!(genes[0].id.as_str(), "cds1");
 
         Ok(())
     }
@@ -303,13 +338,13 @@ mod tests {
         let parser = GffParser::open(temp.path(), GenomeId::new("test_genome"))?;
         let genes = parser.parse_genes().unwrap();
 
+        // No CDS features in this GFF, so gene features are used as fallback.
         assert_eq!(genes.len(), 2);
 
         // Sequence should be extracted
         assert_eq!(genes[0].sequence, b"ATCG".to_vec()); // seq1: 1-4
 
-        // Negative strand should be reverse complemented in a real implementation,
-        // but for now let's just ensure it's extracted (CTAG)
+        // Negative strand: reverse complement of seq2[1..5] = CTAG
         assert_eq!(genes[1].sequence, b"CTAG".to_vec()); // seq2: 2-5
 
         Ok(())

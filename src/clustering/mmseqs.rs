@@ -116,16 +116,21 @@ impl MMseqsRunner {
     ) -> Result<PathBuf> {
         let mut cmd = Command::new(&self.path);
 
+        // Validate identity and coverage are finite values
+        if !identity.is_finite() || !len_dif_percent.is_finite() {
+            return Err(Error::Config("identity and len_dif_percent must be finite values".into()));
+        }
+
         cmd.arg("easy-cluster")
             .arg(input)
             .arg(output)
             .arg(&self.tmp_dir)
             .arg("--min-seq-id")
-            .arg(format!("{}", identity))
+            .arg(format!("{:.6}", identity))
             .arg("--cov-mode")
             .arg("1")        // Coverage relative to shorter sequence
             .arg("-c")
-            .arg(len_dif_percent.to_string())  // Min sequence coverage
+            .arg(format!("{:.6}", len_dif_percent))  // Min sequence coverage
             .arg("--cluster-mode")
             .arg("2"); // Set cover (greedy)
 
@@ -192,11 +197,14 @@ impl MMseqsRunner {
             }
         }
 
-        // Set centroid sequences from the representative gene
+        // Set centroid sequences from the representative gene and fix support
         for cluster in clusters.values_mut() {
             if let Some(seq) = gene_sequences.get(cluster.id.as_str()) {
                 cluster.centroids = vec![seq.clone()];
             }
+            // Support should equal the number of genes in the cluster,
+            // not the initial value of 1
+            cluster.support = cluster.genes.len();
         }
 
         Ok(clusters.into_values().collect())

@@ -141,6 +141,8 @@ pub struct CheckmQcRunner {
     executable: String,
     /// Path to CheckM database
     database_path: Option<PathBuf>,
+    /// QC mode for threshold selection
+    mode: QcMode,
 }
 
 impl CheckmQcRunner {
@@ -149,6 +151,7 @@ impl CheckmQcRunner {
         Self {
             executable: "checkm2".to_string(),
             database_path: None,
+            mode: QcMode::Default,
         }
     }
 
@@ -157,12 +160,19 @@ impl CheckmQcRunner {
         Self {
             executable: path.into(),
             database_path: None,
+            mode: QcMode::Default,
         }
     }
 
     /// Create with CheckM database path.
     pub fn with_database(mut self, path: PathBuf) -> Self {
         self.database_path = Some(path);
+        self
+    }
+
+    /// Set QC mode for threshold selection.
+    pub fn with_mode(mut self, mode: QcMode) -> Self {
+        self.mode = mode;
         self
     }
 

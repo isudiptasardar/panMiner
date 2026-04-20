@@ -1,6 +1,6 @@
 //! PanMiner CLI entry point.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use clap::{Parser, Subcommand};
 use tracing_subscriber::EnvFilter;
 
@@ -439,7 +439,7 @@ fn parse_filter_method(s: &str) -> panminer::config::FilterMethod {
 ///
 /// The Roary-compatible CSV has 14 metadata columns; everything after that
 /// is a per-genome column. Returns 0 if the file is missing or unparseable.
-fn count_genomes_from_roary_csv(input_dir: &PathBuf) -> usize {
+fn count_genomes_from_roary_csv(input_dir: &Path) -> usize {
     let roary_path = input_dir.join("gene_presence_absence.csv");
     if !roary_path.exists() {
         tracing::debug!("gene_presence_absence.csv not found, defaulting genome count to 0");
@@ -461,7 +461,7 @@ fn count_genomes_from_roary_csv(input_dir: &PathBuf) -> usize {
 
 /// A row from gene_data.csv relevant for MSA.
 struct GeneDataMsaRow {
-    gene_id: String,
+    _gene_id: String,
     support: usize,
     dna_sequence: String,
 }
@@ -474,8 +474,8 @@ struct GeneDataMsaRow {
 /// Each cluster gets one FASTA entry per genome that contains it, using the
 /// centroid DNA sequence as the representative for all member genes.
 fn read_gene_data_for_msa(
-    gene_data_path: &PathBuf,
-    roary_path: &PathBuf,
+    gene_data_path: &Path,
+    roary_path: &Path,
     mode: &str,
     total_genomes: usize,
 ) -> anyhow::Result<Vec<(String, Vec<(String, Vec<u8>)>)>> {
@@ -499,7 +499,7 @@ fn read_gene_data_for_msa(
         let dna_sequence = get_field(&record, &column_map, "dna_sequence").to_string();
 
         cluster_data.insert(gene_id.clone(), GeneDataMsaRow {
-            gene_id,
+            _gene_id: gene_id,
             support,
             dna_sequence,
         });
@@ -628,7 +628,7 @@ fn main() -> anyhow::Result<()> {
             tracing::info!("Filtered output written to: {:?}", output);
             tracing::info!("Done.");
         }
-        Some(Commands::Qc { input, output, qc_mode: _, distance, mds, verbose }) => {
+        Some(Commands::Qc { input, output, qc_mode, distance, mds, verbose }) => {
             let filter = if verbose {
                 EnvFilter::new("debug")
             } else {
@@ -645,7 +645,8 @@ fn main() -> anyhow::Result<()> {
             std::fs::create_dir_all(&output)?;
 
             // Run CheckM2 QC
-            let qc_runner = panminer::io::CheckmQcRunner::new();
+            let parsed_qc_mode = parse_qc_mode(&qc_mode);
+            let qc_runner = panminer::io::CheckmQcRunner::new().with_mode(parsed_qc_mode);
             let mut qc_results = Vec::new();
 
             for genome_path in &input {
@@ -1010,18 +1011,18 @@ fn main() -> anyhow::Result<()> {
                             let mut total_clusters: usize = 0;
 
                             // For rarefaction: track which genomes each gene appears in
-                            let mut gene_genome_sets: Vec<Vec<usize>> = Vec::new();
+                            let mut gene_genome_sets: Vec<HashSet<usize>> = Vec::new();
 
                             for line in lines {
                                 let fields: Vec<&str> = line.split('\t').collect();
                                 if fields.len() < 2 {
                                     continue;
                                 }
-                                let mut present_in: Vec<usize> = Vec::new();
+                                let mut present_in: HashSet<usize> = HashSet::new();
                                 for (i, val) in fields.iter().skip(1).enumerate() {
                                     if let Ok(v) = val.parse::<u8>() {
                                         if v > 0 {
-                                            present_in.push(i);
+                                            present_in.insert(i);
                                         }
                                     }
                                 }

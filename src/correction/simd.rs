@@ -4,6 +4,7 @@
 //! Falls back to scalar implementation on unsupported architectures.
 //! Also provides edlib-based Levenshtein alignment for Panaroo compatibility.
 
+#[cfg(target_arch = "x86_64")]
 use std::arch::is_x86_feature_detected;
 
 /// Calculate sequence identity using the best available method.
@@ -27,7 +28,7 @@ pub fn compare_sequences(a: &[u8], b: &[u8]) -> f64 {
 
     // Try NEON (aarch64)
     #[cfg(target_arch = "aarch64")]
-    if is_x86_feature_detected!("neon") {
+    if is_aarch64_feature_detected!("neon") {
         return simd_sequence_identity_neon(a, b);
     }
 
@@ -89,9 +90,9 @@ fn simd_sequence_identity_neon(a: &[u8], b: &[u8]) -> f64 {
             let va = vld1q_u8(a.as_ptr().add(i));
             let vb = vld1q_u8(b.as_ptr().add(i));
             let eq = vceqq_u8(va, vb);
-            // Count matching bytes
-            let mask = vget_lane_u64(vreinterpret_u64_u8(eq), 0);
-            matches += (mask as u64).count_ones() as u64;
+            // vceqq_u8 returns 0xFF for matching bytes, 0x00 otherwise.
+            // Use horizontal add to count all 16 matching bytes.
+            matches += vaddvq_u8(eq) as u64 / 255;
         }
         i += 16;
     }

@@ -18,13 +18,13 @@ use crate::error::Result;
 #[derive(Debug)]
 struct GeneDataRow {
     gene_id: String,
-    gene_name: String,
-    annotation: String,
+    _gene_name: String,
+    _annotation: String,
     contig: String,
-    start: String,
-    end: String,
-    strand: String,
-    support: String,
+    _start: String,
+    _end: String,
+    _strand: String,
+    _support: String,
     dna_sequence: String,
     protein_sequence: String,
 }
@@ -126,13 +126,13 @@ fn parse_row(
 ) -> Result<GeneDataRow> {
     Ok(GeneDataRow {
         gene_id: get_field(record, column_map, "gene_id").to_string(),
-        gene_name: get_field(record, column_map, "gene_name").to_string(),
-        annotation: get_field(record, column_map, "annotation").to_string(),
+        _gene_name: get_field(record, column_map, "gene_name").to_string(),
+        _annotation: get_field(record, column_map, "annotation").to_string(),
         contig: get_field(record, column_map, "contig").to_string(),
-        start: get_field(record, column_map, "start").to_string(),
-        end: get_field(record, column_map, "end").to_string(),
-        strand: get_field(record, column_map, "strand").to_string(),
-        support: get_field(record, column_map, "support").to_string(),
+        _start: get_field(record, column_map, "start").to_string(),
+        _end: get_field(record, column_map, "end").to_string(),
+        _strand: get_field(record, column_map, "strand").to_string(),
+        _support: get_field(record, column_map, "support").to_string(),
         dna_sequence: get_field(record, column_map, "dna_sequence").to_string(),
         protein_sequence: get_field(record, column_map, "protein_sequence").to_string(),
     })

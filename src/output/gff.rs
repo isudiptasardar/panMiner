@@ -9,7 +9,9 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 
 use crate::error::Result;
-use crate::graph::{GeneId, GenomeId, PangenomeGraph};
+use crate::graph::{GenomeId, PangenomeGraph};
+#[cfg(test)]
+use crate::graph::GeneId;
 
 /// Gene info needed for GFF reconstruction.
 ///
@@ -96,6 +98,7 @@ pub fn write_gff_files(
 }
 
 /// Find the cluster ID that contains a given gene.
+#[cfg(test)]
 fn find_cluster_for_gene(graph: &PangenomeGraph, gene_id: &GeneId) -> String {
     for node in graph.nodes.values() {
         for member_ids in node.gene_members.values() {

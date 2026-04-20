@@ -94,8 +94,7 @@ mod tests {
 
     #[test]
     fn test_write_summary_stats_with_graph() {
-        use crate::graph::{Node, GeneCluster, ClusterId, GenomeId};
-        use std::collections::HashSet;
+        use crate::graph::{Node, GeneCluster};
 
         let mut matrix = BitPackedMatrix::new(2, 2);
         matrix.set_genome_names(vec!["g1".to_string(), "g2".to_string()]);

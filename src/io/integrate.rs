@@ -230,7 +230,7 @@ pub fn integrate_genome(
     );
 
     // Step 4: Build adjacency edges for new genes on the same contig
-    let effective_threads = if threads == 0 {
+    let _effective_threads = if threads == 0 {
         std::thread::available_parallelism()
             .map(|p| p.get())
             .unwrap_or(1)
