@@ -89,7 +89,8 @@ parquet = ["dep:parquet", "dep:arrow"]
 python = ["dep:pyo3"]
 viz = ["dep:tera"]
 dbg = ["dep:ggcat-api"]
-full = ["cpu", "mmseqs", "parquet", "viz", "dbg"]
+full = ["cpu", "mmseqs", "parquet", "viz", "dbg", "prodigal"]
+prodigal = []  # Prodigal gene calling support (subprocess)
 
 [profile.release]
 opt-level = 3

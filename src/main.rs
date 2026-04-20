@@ -422,6 +422,7 @@ fn parse_bakta_db_type(s: &str) -> BaktaDbType {
 fn parse_pipeline_mode(s: &str) -> PipelineMode {
     match s.to_lowercase().as_str() {
         "dbg" => PipelineMode::Dbg,
+        "prodigal" => PipelineMode::Prodigal,
         _ => PipelineMode::Gff,
     }
 }

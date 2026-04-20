@@ -46,6 +46,9 @@ pub use config::OutputFormat;
 pub use config::PipelineMode;
 pub use io::{BaktaRunner, BaktaDbType, translate, translate_with_stop, IntegrateResult};
 
+#[cfg(feature = "prodigal")]
+pub use io::orphos::OrphosRunner;
+
 /// Prelude module for common imports
 pub mod prelude {
     pub use crate::config::PanminerConfig;
