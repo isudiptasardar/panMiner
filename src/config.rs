@@ -39,6 +39,8 @@ pub enum OutputFormat {
     Struct,
     /// Structural variant matrix (TSV)
     SVMatrix,
+    /// Gene abundance visualization (HTML/D3.js)
+    Abundance,
 }
 
 impl std::fmt::Display for OutputFormat {
@@ -53,6 +55,7 @@ impl std::fmt::Display for OutputFormat {
             OutputFormat::HtmlViz => write!(f, "html"),
             OutputFormat::Struct => write!(f, "struct"),
             OutputFormat::SVMatrix => write!(f, "svmatrix"),
+            OutputFormat::Abundance => write!(f, "abundance"),
         }
     }
 }
@@ -103,6 +106,8 @@ pub enum PipelineMode {
     Gff,
     /// cDBG-based gene calling via GGCAT + ggCaller
     Dbg,
+    /// Prodigal gene calling for unannotated FASTA assemblies
+    Prodigal,
 }
 
 impl PipelineMode {
@@ -111,6 +116,7 @@ impl PipelineMode {
         match self {
             PipelineMode::Gff => "gff",
             PipelineMode::Dbg => "dbg",
+            PipelineMode::Prodigal => "prodigal",
         }
     }
 }
@@ -128,7 +134,8 @@ impl std::str::FromStr for PipelineMode {
         match s.to_lowercase().as_str() {
             "gff" => Ok(PipelineMode::Gff),
             "dbg" => Ok(PipelineMode::Dbg),
-            _ => Err(format!("Invalid pipeline mode: '{}'. Use 'gff' or 'dbg'.", s)),
+            "prodigal" => Ok(PipelineMode::Prodigal),
+            _ => Err(format!("Invalid pipeline mode: '{}'. Use 'gff', 'dbg', or 'prodigal'.", s)),
         }
     }
 }
@@ -592,6 +599,12 @@ mod tests {
     }
 
     #[test]
+    fn test_pipeline_mode_prodigal() {
+        let mode = PipelineMode::Prodigal;
+        assert_eq!(mode.as_str(), "prodigal");
+    }
+
+    #[test]
     fn test_pipeline_mode_default() {
         assert_eq!(PipelineMode::default(), PipelineMode::Gff);
     }
@@ -609,6 +622,8 @@ mod tests {
         assert_eq!(PipelineMode::from_str("GFF").unwrap(), PipelineMode::Gff);
         assert_eq!(PipelineMode::from_str("dbg").unwrap(), PipelineMode::Dbg);
         assert_eq!(PipelineMode::from_str("DBG").unwrap(), PipelineMode::Dbg);
+        assert_eq!(PipelineMode::from_str("prodigal").unwrap(), PipelineMode::Prodigal);
+        assert_eq!(PipelineMode::from_str("PRODIGAL").unwrap(), PipelineMode::Prodigal);
         assert!(PipelineMode::from_str("invalid").is_err());
     }
 
@@ -616,6 +631,7 @@ mod tests {
     fn test_pipeline_mode_display() {
         assert_eq!(format!("{}", PipelineMode::Gff), "gff");
         assert_eq!(format!("{}", PipelineMode::Dbg), "dbg");
+        assert_eq!(format!("{}", PipelineMode::Prodigal), "prodigal");
     }
 
     #[test]

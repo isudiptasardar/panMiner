@@ -25,6 +25,7 @@ mod html_viz;
 mod filter_pa;
 mod trim;
 mod codon;
+pub mod abundance_viz;
 pub mod qc_stats;
 pub mod qc_viz;
 
@@ -41,6 +42,7 @@ pub use filter_pa::{FilterType, filter_presence_absence, parse_filter_types};
 pub use trim::{ClipKitRunner, TrimMode, BmgeRunner};
 pub use qc_stats::{write_qc_stats, write_qc_summary};
 pub use qc_viz::write_qc_html_report;
+pub use abundance_viz::AbundanceVizWriter;
 
 #[cfg(feature = "parquet")]
 pub use parquet::ParquetWriter;
@@ -308,6 +310,11 @@ impl OutputWriter {
                         .write_tsv(&triplets, &path)?;
                     paths.sv_matrix = Some(path);
                     tracing::info!("Wrote structural variant matrix (TSV)");
+                }
+                OutputFormat::Abundance => {
+                    // Abundance visualization is handled as a downstream analysis
+                    // via --abundance flag, not during main pipeline output.
+                    tracing::debug!("Abundance output format is handled separately via --abundance");
                 }
             }
         }
