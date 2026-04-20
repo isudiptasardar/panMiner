@@ -10,6 +10,7 @@ use panminer::output::{filter_presence_absence, parse_filter_types};
 use panminer::pipeline::PanminerPipeline;
 use panminer::io::QcRunner;
 use panminer::downstream::{DownstreamRunner, DownstreamResult};
+use panminer::clustering::{AlignmentRunner, AlignmentTool, MafftRunner, ClustalOmegaRunner, PrankRunner};
 
 /// PanMiner - A modern pangenome analysis tool with GPU and CPU support.
 #[derive(Parser, Debug)]
@@ -239,9 +240,38 @@ enum Commands {
         protein: bool,
     },
 
+    /// Integrate a new genome into an existing pangenome
+    #[command(name = "integrate")]
+    Integrate {
+        /// Existing PanMiner output directory
+        #[arg(long)]
+        graph: PathBuf,
+
+        /// New GFF3 file to integrate
+        #[arg(long)]
+        input: PathBuf,
+
+        /// Output directory for updated pangenome
+        #[arg(short = 'o', long, default_value = "integrated_output")]
+        output: PathBuf,
+
+        /// Identity threshold for matching new genes (0.5-1.0)
+        #[arg(long, default_value = "0.98")]
+        identity: f32,
+
+        /// Number of threads (0 = auto-detect)
+        #[arg(short = 't', long, default_value = "0")]
+        threads: usize,
+
+        /// Verbose output
+        #[arg(short, long)]
+        verbose: bool,
+    },
+
     /// Run downstream analyses on PanMiner output
     #[command(name = "analyze")]
     Analyze {
+
         /// PanMiner output directory from a prior run
         #[arg(short = 'i', long)]
         input: PathBuf,
@@ -310,6 +340,34 @@ enum Commands {
         #[arg(short, long)]
         verbose: bool,
     },
+
+    /// Run multiple sequence alignment on pangenome output
+    #[command(name = "msa")]
+    Msa {
+        /// PanMiner output directory
+        #[arg(short = 'i', long)]
+        input: PathBuf,
+
+        /// Output directory for alignment files
+        #[arg(short = 'o', long, default_value = "msa_output")]
+        output: PathBuf,
+
+        /// Alignment mode: core or pan
+        #[arg(long, default_value = "core")]
+        mode: String,
+
+        /// Alignment tool: mafft, clustal, prank
+        #[arg(long, default_value = "mafft")]
+        aligner: String,
+
+        /// Number of threads
+        #[arg(short = 't', long, default_value = "1")]
+        threads: usize,
+
+        /// Verbose output
+        #[arg(short, long)]
+        verbose: bool,
+    },
 }
 
 fn parse_mode(s: &str) -> CorrectionMode {
@@ -365,6 +423,126 @@ fn parse_filter_method(s: &str) -> panminer::config::FilterMethod {
         "clipkit" => panminer::config::FilterMethod::ClipKit,
         _ => panminer::config::FilterMethod::None,
     }
+}
+
+/// Count total genomes from the gene_presence_absence.csv header.
+///
+/// The Roary-compatible CSV has 14 metadata columns; everything after that
+/// is a per-genome column. Returns 0 if the file is missing or unparseable.
+fn count_genomes_from_roary_csv(input_dir: &PathBuf) -> usize {
+    let roary_path = input_dir.join("gene_presence_absence.csv");
+    if !roary_path.exists() {
+        tracing::debug!("gene_presence_absence.csv not found, defaulting genome count to 0");
+        return 0;
+    }
+
+    match std::fs::read_to_string(&roary_path) {
+        Ok(content) => {
+            let header = match content.lines().next() {
+                Some(h) => h,
+                None => return 0,
+            };
+            let num_columns = header.split(',').count();
+            num_columns.saturating_sub(14)
+        }
+        Err(_) => 0,
+    }
+}
+
+/// A row from gene_data.csv relevant for MSA.
+struct GeneDataMsaRow {
+    gene_id: String,
+    support: usize,
+    dna_sequence: String,
+}
+
+/// Read gene_data.csv and return clusters filtered by mode.
+///
+/// Returns a Vec of (cluster_id, sequences) where each cluster has one
+/// centroid sequence. When `mode` is "core", only clusters present in
+/// >= 99% of genomes are included. When "pan", all clusters are included.
+fn read_gene_data_for_msa(
+    path: &PathBuf,
+    mode: &str,
+    total_genomes: usize,
+) -> anyhow::Result<Vec<(String, Vec<(String, Vec<u8>)>)>> {
+    let mut reader = csv::ReaderBuilder::new()
+        .has_headers(true)
+        .from_path(path)?;
+
+    let headers = reader.headers()?.clone();
+    let column_map = build_column_map(&headers);
+
+    let mut rows: Vec<GeneDataMsaRow> = Vec::new();
+
+    for result in reader.records() {
+        let record = result?;
+        let gene_id = get_field(&record, &column_map, "gene_id").to_string();
+        let support: usize = get_field(&record, &column_map, "support")
+            .parse()
+            .unwrap_or(0);
+        let dna_sequence = get_field(&record, &column_map, "dna_sequence").to_string();
+
+        rows.push(GeneDataMsaRow {
+            gene_id,
+            support,
+            dna_sequence,
+        });
+    }
+
+    let core_threshold = if total_genomes > 0 {
+        (total_genomes as f32 * 0.99).ceil() as usize
+    } else {
+        // Fallback: if we could not determine genome count from Roary CSV,
+        // try to infer from the max support value. Use the max support as
+        // total_genomes so that only clusters with support == max are "core".
+        let max_support = rows.iter().map(|r| r.support).max().unwrap_or(0);
+        (max_support as f32 * 0.99).ceil() as usize
+    };
+
+    let clusters: Vec<(String, Vec<(String, Vec<u8>)>)> = rows
+        .into_iter()
+        .filter(|row| {
+            if mode == "core" {
+                row.support >= core_threshold
+            } else {
+                true // "pan" mode includes all
+            }
+        })
+        .filter_map(|row| {
+            if row.dna_sequence.is_empty() {
+                return None;
+            }
+            let gene_id = row.gene_id.clone();
+            Some((
+                gene_id,
+                vec![(row.gene_id, row.dna_sequence.into_bytes())],
+            ))
+        })
+        .collect();
+
+    Ok(clusters)
+}
+
+/// Build a mapping from column name to column index.
+fn build_column_map(headers: &csv::StringRecord) -> std::collections::HashMap<String, usize> {
+    headers
+        .iter()
+        .enumerate()
+        .map(|(i, h)| (h.to_string(), i))
+        .collect()
+}
+
+/// Get a field from a CSV record by column name, falling back to empty string.
+fn get_field<'a>(
+    record: &'a csv::StringRecord,
+    column_map: &std::collections::HashMap<String, usize>,
+    name: &str,
+) -> &'a str {
+    column_map
+        .get(name)
+        .and_then(|&i| record.get(i))
+        .unwrap_or("")
 }
 
 fn main() -> anyhow::Result<()> {
@@ -505,6 +683,39 @@ fn main() -> anyhow::Result<()> {
             tracing::info!("PanMiner extract-gene v{}", panminer::VERSION);
             panminer::io::extract_gene(&input, &cluster, &output, protein)?;
             tracing::info!("Extracted sequences written to: {:?}", output);
+            tracing::info!("Done.");
+        }
+        Some(Commands::Integrate { graph, input, output, identity, threads, verbose }) => {
+            let filter = if verbose {
+                EnvFilter::new("debug")
+            } else {
+                EnvFilter::new("info")
+            };
+            tracing_subscriber::fmt()
+                .with_env_filter(filter)
+                .with_target(false)
+                .init();
+
+            tracing::info!("PanMiner integrate v{}", panminer::VERSION);
+            let effective_threads = if threads == 0 {
+                std::thread::available_parallelism().map(|p| p.get()).unwrap_or(1)
+            } else {
+                threads
+            };
+
+            match panminer::io::integrate_genome(&graph, &input, &output, identity, effective_threads) {
+                Ok(result) => {
+                    tracing::info!("Integrated genome into pangenome");
+                    tracing::info!("Total nodes: {}, Total edges: {}", result.total_nodes, result.total_edges);
+                    tracing::info!("Genes matched to existing clusters: {}", result.genes_matched);
+                    tracing::info!("New clusters created: {}", result.new_nodes);
+                    tracing::info!("Output written to: {:?}", result.output_dir);
+                }
+                Err(e) => {
+                    tracing::error!("Integration failed: {}", e);
+                    return Err(anyhow::anyhow!("{}", e));
+                }
+            }
             tracing::info!("Done.");
         }
         Some(Commands::Analyze { input, gwas, gwas_tool, phenotypes, panstripe, tree, amr, amr_database, organism, neighborhood, seed_gene, neighborhood_depth, accumulation, num_samples, export_grapetree, export_itol, verbose }) => {
@@ -700,6 +911,117 @@ fn main() -> anyhow::Result<()> {
             }
 
             tracing::info!("Downstream analysis complete. Results in: {:?}", downstream_dir);
+            tracing::info!("Done.");
+        }
+        Some(Commands::Msa { input, output, mode, aligner, threads, verbose }) => {
+            let filter = if verbose {
+                EnvFilter::new("debug")
+            } else {
+                EnvFilter::new("info")
+            };
+            tracing_subscriber::fmt()
+                .with_env_filter(filter)
+                .with_target(false)
+                .init();
+
+            tracing::info!("PanMiner msa v{}", panminer::VERSION);
+
+            // Validate input directory
+            let gene_data_path = input.join("gene_data.csv");
+            if !gene_data_path.exists() {
+                return Err(anyhow::anyhow!(
+                    "gene_data.csv not found in {:?}. Is this a PanMiner output directory?",
+                    input
+                ));
+            }
+
+            // Create output directory
+            std::fs::create_dir_all(&output)?;
+
+            // Determine total genome count from gene_presence_absence.csv header
+            let total_genomes = count_genomes_from_roary_csv(&input);
+
+            // Build the alignment runner based on --aligner
+            let (runner, tool): (Box<dyn AlignmentRunner>, AlignmentTool) = match aligner.as_str() {
+                "mafft" => (Box::new(MafftRunner::new()), AlignmentTool::Mafft),
+                "clustal" => (Box::new(ClustalOmegaRunner::new()), AlignmentTool::ClustalOmega),
+                "prank" => (Box::new(PrankRunner::new()), AlignmentTool::Prank),
+                other => {
+                    return Err(anyhow::anyhow!(
+                        "Unknown aligner '{}'. Available: mafft, clustal, prank",
+                        other
+                    ));
+                }
+            };
+
+            if !runner.is_available() {
+                return Err(anyhow::anyhow!(
+                    "{} is not installed. Install with: conda install -c bioconda {}",
+                    tool.name(),
+                    tool.executable()
+                ));
+            }
+
+            // Read gene_data.csv and collect sequences based on mode
+            let clusters = read_gene_data_for_msa(&gene_data_path, &mode, total_genomes)?;
+
+            if clusters.is_empty() {
+                tracing::warn!("No gene clusters match the '{}' filter", mode);
+                tracing::info!("Done.");
+                return Ok(());
+            }
+
+            tracing::info!(
+                "Running MSA on {} clusters with {} (mode: {})",
+                clusters.len(),
+                tool.name(),
+                mode
+            );
+
+            let effective_threads = if threads == 0 {
+                std::thread::available_parallelism().map(|p| p.get()).unwrap_or(1)
+            } else {
+                threads
+            };
+
+            let mut aligned = 0usize;
+            let mut failed = 0usize;
+
+            for (cluster_id, sequences) in &clusters {
+                if sequences.len() < 2 {
+                    tracing::debug!("Skipping cluster '{}': only {} sequence(s)", cluster_id, sequences.len());
+                    continue;
+                }
+
+                match runner.run_msa(sequences, tool) {
+                    Ok(result) => {
+                        let out_path = output.join(format!("{}.aligned.fasta", cluster_id));
+                        std::fs::write(&out_path, &result.aligned_fasta)?;
+                        tracing::debug!(
+                            "Aligned cluster '{}': {} sequences, {} columns",
+                            cluster_id, result.num_sequences, result.alignment_length
+                        );
+                        aligned += 1;
+                    }
+                    Err(e) => {
+                        tracing::warn!("Alignment failed for cluster '{}': {}", cluster_id, e);
+                        failed += 1;
+                    }
+                }
+
+                // Simple concurrency hint for the OS
+                if aligned % effective_threads == 0 && aligned > 0 {
+                    std::thread::yield_now();
+                }
+            }
+
+            tracing::info!(
+                "MSA complete: {} clusters aligned, {} failed, {} skipped (single sequence)",
+                aligned,
+                failed,
+                clusters.len() - aligned - failed
+            );
+            tracing::info!("Output written to: {:?}", output);
             tracing::info!("Done.");
         }
         None => {

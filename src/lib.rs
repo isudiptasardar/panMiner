@@ -44,7 +44,7 @@ pub use pipeline::PanminerPipeline;
 pub use graph::{PangenomeGraph, Gene, GeneCluster, Node, Edge, merge_pangenomes, MergeResult};
 pub use config::OutputFormat;
 pub use config::PipelineMode;
-pub use io::{BaktaRunner, BaktaDbType, translate, translate_with_stop};
+pub use io::{BaktaRunner, BaktaDbType, translate, translate_with_stop, IntegrateResult};
 
 /// Prelude module for common imports
 pub mod prelude {

@@ -21,5 +21,5 @@ pub use concurrent::ConcurrentGraph;
 pub use matrix::BitPackedMatrix;
 pub use builder::GraphBuilder;
 pub use structural_variants::{StructuralVariantDetector, StructuralVariant, VariantType};
-pub use merge::{merge_pangenomes, MergeResult};
+pub use merge::{merge_pangenomes, MergeResult, load_gml_graph};
 pub use highly_variable::{HighlyVariableDetector, HighlyVariableResult};

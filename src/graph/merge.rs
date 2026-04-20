@@ -141,7 +141,11 @@ pub fn merge_pangenomes(
 }
 
 /// Load a pangenome graph from a GML file.
-fn load_gml_graph(path: &PathBuf) -> Result<PangenomeGraph> {
+/// Load a pangenome graph from a GML file.
+///
+/// Reads a PanMiner-format GML file and reconstructs the pangenome graph
+/// including nodes (with cluster_id, support) and edges.
+pub fn load_gml_graph(path: &PathBuf) -> Result<PangenomeGraph> {
     let content = std::fs::read_to_string(path)?;
     let mut graph = PangenomeGraph::new();
 

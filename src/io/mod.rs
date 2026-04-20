@@ -17,6 +17,7 @@ mod mds;
 mod ggcat;
 mod ggcaller;
 mod subprocess;
+mod integrate;
 pub mod extract_gene;
 
 pub use mmap::MmapFile;
@@ -33,3 +34,4 @@ pub use mds::{compute_mds, compute_mds_with_labels, MdsProjection};
 pub use ggcat::{GGCATBuilder, CDBGGraph, CDBGStats, compute_cdbg_stats};
 pub use ggcaller::{GGCallerRunner, GGCallerOutput};
 pub use subprocess::run_with_timeout;
+pub use integrate::{integrate_genome, IntegrateResult};
