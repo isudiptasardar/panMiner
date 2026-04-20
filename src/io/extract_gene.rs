@@ -83,7 +83,7 @@ pub fn extract_gene(
 
         writeln!(
             writer,
-            ">{} genome=NA contig={}",
+            ">{} contig={}",
             row.gene_id, row.contig
         )?;
         writeln!(writer, "{}", sequence)?;

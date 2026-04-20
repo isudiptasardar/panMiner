@@ -107,6 +107,19 @@ pub fn merge_pangenomes(
                         merged_node.genomes.extend(source_node.genomes);
                         // Merge annotations
                         merged_node.annotations.extend(source_node.annotations);
+                        // Merge centroid sequences
+                        merged_node.centroid_sequences.extend(source_node.centroid_sequences);
+                        // Merge contig-end genomes
+                        merged_node.contig_end_genomes.extend(source_node.contig_end_genomes);
+                        // Merge gene members
+                        for (genome_id, gene_ids) in source_node.gene_members {
+                            merged_node.gene_members.entry(genome_id)
+                                .or_default()
+                                .extend(gene_ids);
+                        }
+                        // OR boolean flags
+                        merged_node.is_paralog |= source_node.is_paralog;
+                        merged_node.is_highly_variable |= source_node.is_highly_variable;
                         merged_node.support += source_node.support;
                         merged_count += 1;
                     }

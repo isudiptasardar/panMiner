@@ -9,9 +9,9 @@ use crate::clustering::{Clusterer, CpuClusterer, MMseqsRunner};
 use crate::correction::{ContaminationRemover, ContigEndPruner, FragmentMerger, MissingGeneRecoverer, MisassemblyEdgeCleaner, ParalogResolver, DistanceCache};
 use crate::error::{Error, Result};
 use crate::graph::{
-    BitPackedMatrix, ConcurrentGraph, Gene, GeneCluster, Node, GenomeId, GraphBuilder, PangenomeGraph,
+    BitPackedMatrix, ConcurrentGraph, Gene, GeneCluster, GeneId, Node, GenomeId, GraphBuilder, PangenomeGraph,
 };
-use crate::io::{GffParser, CheckmQcRunner, QcRunner, GenomeQC, BaktaRunner, is_genbank_file};
+use crate::io::{FastaParser, GffParser, CheckmQcRunner, QcRunner, GenomeQC, BaktaRunner, is_genbank_file};
 use crate::output::{OutputPaths, OutputWriter};
 use crate::output::qc_stats::{write_qc_stats, write_qc_summary};
 use crate::gwas::{PyseerRunner, GWASRunner};
@@ -44,6 +44,9 @@ impl PanminerPipeline {
         // Dispatch based on pipeline mode
         if self.config.pipeline_mode == PipelineMode::Dbg {
             return self.run_dbg_mode();
+        }
+        if self.config.pipeline_mode == PipelineMode::Prodigal {
+            return self.run_prodigal_mode();
         }
 
         // Phase 0: Pre-processing QC (optional)
@@ -419,6 +422,142 @@ impl PanminerPipeline {
         Ok(output_paths)
     }
 
+    /// Run Prodigal-based pipeline: call genes on raw FASTA assemblies.
+    fn run_prodigal_mode(&self) -> Result<OutputPaths> {
+        tracing::info!("Running Prodigal-based pipeline (mode=prodigal)");
+
+        #[cfg(feature = "prodigal")]
+        {
+            let runner = crate::io::OrphosRunner::detect()
+                .ok_or_else(|| Error::ExternalTool(
+                    "prodigal not found: install with conda install -c bioconda prodigal".into()
+                ))?;
+
+            // Phase 0: Pre-processing QC (optional)
+            let qc_results = if self.config.enable_qc {
+                tracing::info!("Phase 0: Running pre-processing QC");
+                self.run_qc()?
+            } else {
+                vec![]
+            };
+
+            let input_files: Vec<PathBuf> = if !qc_results.is_empty() {
+                self.config.input_files.iter()
+                    .zip(qc_results.iter())
+                    .filter(|(_, qc)| qc.passed)
+                    .map(|(p, _)| p.clone())
+                    .collect()
+            } else {
+                self.config.input_files.clone()
+            };
+
+            if input_files.is_empty() {
+                return Err(Error::NoGenomes);
+            }
+
+            // Phase 1: Run Prodigal on each FASTA assembly
+            tracing::info!("Phase 1: Running Prodigal gene calling on {} assemblies", input_files.len());
+            let mut all_genes = Vec::new();
+            let mut genome_ids = Vec::new();
+            let mut contig_dna: HashMap<(GenomeId, String), Vec<u8>> = HashMap::new();
+
+            for fasta_path in &input_files {
+                let genome_id = fasta_path.file_stem()
+                    .map(|s| s.to_string_lossy().to_string())
+                    .unwrap_or_else(|| "unknown".to_string());
+                let gid = GenomeId::new(&genome_id);
+                genome_ids.push(gid.clone());
+
+                match runner.predict_genes(fasta_path) {
+                    Ok(predicted) => {
+                        tracing::info!("Prodigal predicted {} genes for {}", predicted.len(), genome_id);
+                        for pg in predicted {
+                            let strand = match pg.strand {
+                                crate::io::orphos::Strand::Forward => crate::graph::Strand::Plus,
+                                crate::io::orphos::Strand::Reverse => crate::graph::Strand::Minus,
+                            };
+                            let gene = Gene {
+                                id: GeneId::new(&pg.gene_id),
+                                sequence: pg.sequence,
+                                genome_id: gid.clone(),
+                                contig: pg.contig,
+                                start: pg.start,
+                                end: pg.end,
+                                strand,
+                                annotation: None,
+                            };
+                            all_genes.push(gene);
+                        }
+                    }
+                    Err(e) => {
+                        tracing::warn!("Prodigal failed for {}: {}", genome_id, e);
+                    }
+                }
+
+                // Read FASTA contig sequences for missing gene recovery
+                if let Ok(parser) = crate::io::FastaParser::open(fasta_path) {
+                    if let Ok(records) = parser.parse_all() {
+                        for (contig_name, seq) in records {
+                            contig_dna.insert((gid.clone(), contig_name), seq);
+                        }
+                    }
+                }
+            }
+
+            if all_genes.is_empty() {
+                return Err(Error::NoGenes(format!(
+                    "Prodigal predicted no genes from {} assemblies", input_files.len()
+                )));
+            }
+
+            tracing::info!("Prodigal produced {} genes from {} genomes", all_genes.len(), genome_ids.len());
+
+            // Phases 2-9: same as GFF pipeline
+            let mut clusters = self.cluster_genes(&all_genes)?;
+            ParalogResolver::mark_paralog_clusters(&mut clusters, &all_genes);
+            let concurrent_graph = self.build_graph(&clusters, &all_genes, &contig_dna);
+            self.run_corrections(&concurrent_graph, genome_ids.len())?;
+
+            let mut graph = concurrent_graph.to_standard();
+            let matrix = self.build_matrix(&graph, &genome_ids);
+
+            let hv_detector = crate::graph::HighlyVariableDetector::new();
+            let hv_result = hv_detector.detect(&graph);
+            for cluster_id in &hv_result.highly_variable {
+                if let Some(node) = graph.nodes.get_mut(cluster_id) {
+                    node.is_highly_variable = true;
+                }
+            }
+
+            let writer = OutputWriter::new(&self.config);
+            let gene_members: HashMap<String, HashMap<String, Vec<String>>> =
+                graph.nodes.iter().map(|(cid, node)| {
+                    let inner: HashMap<String, Vec<String>> = node.gene_members.iter()
+                        .map(|(gid, genes)| (gid.as_str().to_string(), genes.clone()))
+                        .collect();
+                    (cid.as_str().to_string(), inner)
+                }).collect();
+            let output_paths = writer.write_all(&graph, &matrix, &gene_members)?;
+
+            if self.config.enable_qc {
+                let stats_path = self.config.output_dir.join("qc_stats.csv");
+                if let Err(e) = crate::output::write_qc_stats(&qc_results, &stats_path) {
+                    tracing::warn!("Failed to write QC stats: {}", e);
+                }
+            }
+
+            tracing::info!("Prodigal pipeline complete. Output: {:?}", output_paths.output_dir);
+            Ok(output_paths)
+        }
+
+        #[cfg(not(feature = "prodigal"))]
+        {
+            Err(Error::FeatureNotEnabled(
+                "Prodigal gene calling requires the 'prodigal' feature flag. Rebuild with --features prodigal".into()
+            ))
+        }
+    }
+
     /// Run pre-processing QC on all input files.
     fn run_qc(&self) -> Result<Vec<GenomeQC>> {
         let mut qc_results = Vec::new();
@@ -721,16 +860,23 @@ impl PanminerPipeline {
         let merger = FragmentMerger::new()
             .with_collapse_thresholds(self.config.collapse_thresholds.clone());
 
-        // Build sequences HashMap from graph nodes (centroids from clusters)
+        // Build sequences HashMap from graph nodes (all centroids)
         let sequences: std::collections::HashMap<String, Vec<u8>> = graph
             .nodes
             .iter()
-            .map(|entry| {
-                let cluster_id = entry.key();
-                let node = entry.value();
-                (cluster_id.to_string(), node.centroid_sequences.first().cloned().unwrap_or_default())
+            .flat_map(|entry| {
+                let cluster_id = entry.key().clone();
+                let centroids = entry.value().centroid_sequences.clone();
+                centroids.into_iter().enumerate().filter_map(move |(i, seq)| {
+                    if seq.is_empty() {
+                        None
+                    } else if i == 0 {
+                        Some((cluster_id.to_string(), seq))
+                    } else {
+                        Some((format!("{}_centroid{}", cluster_id, i), seq))
+                    }
+                })
             })
-            .filter(|(_, seq)| !seq.is_empty())
             .collect();
 
         tracing::info!("Passing {} sequences to fragment merger", sequences.len());
@@ -753,9 +899,9 @@ impl PanminerPipeline {
                 graph, &sequences, *threshold, Some(&mut distance_cache)
             )?;
             total_collapsed += collapsed;
-            if collapsed == 0 {
-                break; // No more merges possible at this threshold
-            }
+            // Continue to lower thresholds even if no merges at current level,
+            // because a merge at a higher threshold may create new pairs that
+            // can merge at lower thresholds (matches Panaroo's behavior).
         }
         tracing::info!(
             "Iterative gene family collapsing: {} total merges across {} thresholds",
@@ -775,12 +921,19 @@ impl PanminerPipeline {
         let sequences_after_recovery: std::collections::HashMap<String, Vec<u8>> = graph
             .nodes
             .iter()
-            .map(|entry| {
-                let cluster_id = entry.key();
-                let node = entry.value();
-                (cluster_id.to_string(), node.centroid_sequences.first().cloned().unwrap_or_default())
+            .flat_map(|entry| {
+                let cluster_id = entry.key().clone();
+                let centroids = entry.value().centroid_sequences.clone();
+                centroids.into_iter().enumerate().filter_map(move |(i, seq)| {
+                    if seq.is_empty() {
+                        None
+                    } else if i == 0 {
+                        Some((cluster_id.to_string(), seq))
+                    } else {
+                        Some((format!("{}_centroid{}", cluster_id, i), seq))
+                    }
+                })
             })
-            .filter(|(_, seq)| !seq.is_empty())
             .collect();
 
         let merger2 = FragmentMerger::new()
@@ -791,9 +944,6 @@ impl PanminerPipeline {
                 graph, &sequences_after_recovery, *threshold, Some(&mut distance_cache)
             )?;
             total_recollapsed += collapsed;
-            if collapsed == 0 {
-                break;
-            }
         }
         tracing::info!(
             "Post-recovery re-collapsing: {} total merges",

@@ -466,24 +466,29 @@ struct GeneDataMsaRow {
     dna_sequence: String,
 }
 
-/// Read gene_data.csv and return clusters filtered by mode.
+/// Read gene_data.csv and the Roary P/A CSV to return clusters with one
+/// sequence per genome for MSA.
 ///
-/// Returns a Vec of (cluster_id, sequences) where each cluster has one
-/// centroid sequence. When `mode` is "core", only clusters present in
-/// >= 99% of genomes are included. When "pan", all clusters are included.
+/// When `mode` is "core", only clusters present in >= 99% of genomes are
+/// included. When "pan", all clusters with sequences are included.
+/// Each cluster gets one FASTA entry per genome that contains it, using the
+/// centroid DNA sequence as the representative for all member genes.
 fn read_gene_data_for_msa(
-    path: &PathBuf,
+    gene_data_path: &PathBuf,
+    roary_path: &PathBuf,
     mode: &str,
     total_genomes: usize,
 ) -> anyhow::Result<Vec<(String, Vec<(String, Vec<u8>)>)>> {
+    // 1. Read gene_data.csv for centroid sequences and support values
     let mut reader = csv::ReaderBuilder::new()
         .has_headers(true)
-        .from_path(path)?;
+        .from_path(gene_data_path)?;
 
     let headers = reader.headers()?.clone();
     let column_map = build_column_map(&headers);
 
-    let mut rows: Vec<GeneDataMsaRow> = Vec::new();
+    let mut cluster_data: std::collections::HashMap<String, GeneDataMsaRow> =
+        std::collections::HashMap::new();
 
     for result in reader.records() {
         let record = result?;
@@ -493,41 +498,86 @@ fn read_gene_data_for_msa(
             .unwrap_or(0);
         let dna_sequence = get_field(&record, &column_map, "dna_sequence").to_string();
 
-        rows.push(GeneDataMsaRow {
+        cluster_data.insert(gene_id.clone(), GeneDataMsaRow {
             gene_id,
             support,
             dna_sequence,
         });
     }
 
+    // 2. Read gene_presence_absence.csv to get per-genome membership
+    let mut genome_names: Vec<String> = Vec::new();
+    let mut cluster_genomes: std::collections::HashMap<String, Vec<String>> =
+        std::collections::HashMap::new();
+
+    if roary_path.exists() {
+        let mut roary_reader = csv::ReaderBuilder::new()
+            .has_headers(true)
+            .from_path(roary_path)?;
+        let roary_headers = roary_reader.headers()?.clone();
+
+        // Genome columns start at index 14 (after 14 metadata columns)
+        for (i, h) in roary_headers.iter().enumerate() {
+            if i >= 14 {
+                genome_names.push(h.to_string());
+            }
+        }
+
+        for result in roary_reader.records() {
+            let record = result?;
+            let cluster_id = record.get(0).unwrap_or("").to_string();
+            if cluster_id.is_empty() {
+                continue;
+            }
+            let mut genomes_for_cluster = Vec::new();
+            for (i, genome) in genome_names.iter().enumerate() {
+                let cell = record.get(14 + i).unwrap_or("");
+                if !cell.is_empty() {
+                    genomes_for_cluster.push(genome.clone());
+                }
+            }
+            cluster_genomes.insert(cluster_id, genomes_for_cluster);
+        }
+    }
+
     let core_threshold = if total_genomes > 0 {
         (total_genomes as f32 * 0.99).ceil() as usize
     } else {
-        // Fallback: if we could not determine genome count from Roary CSV,
-        // try to infer from the max support value. Use the max support as
-        // total_genomes so that only clusters with support == max are "core".
-        let max_support = rows.iter().map(|r| r.support).max().unwrap_or(0);
+        let max_support = cluster_data.values().map(|r| r.support).max().unwrap_or(0);
         (max_support as f32 * 0.99).ceil() as usize
     };
 
-    let clusters: Vec<(String, Vec<(String, Vec<u8>)>)> = rows
+    // 3. Build per-cluster sequence lists: one entry per genome
+    let clusters: Vec<(String, Vec<(String, Vec<u8>)>)> = cluster_data
         .into_iter()
-        .filter(|row| {
+        .filter(|(_, row)| {
             if mode == "core" {
                 row.support >= core_threshold
             } else {
-                true // "pan" mode includes all
+                true
             }
         })
-        .filter_map(|row| {
+        .filter_map(|(cluster_id, row)| {
             if row.dna_sequence.is_empty() {
                 return None;
             }
-            let gene_id = row.gene_id.clone();
-            Some((
-                gene_id,
-                vec![(row.gene_id, row.dna_sequence.into_bytes())],
-            ))
+            let dna_bytes = row.dna_sequence.into_bytes();
+            let genomes = cluster_genomes.get(&cluster_id);
+
+            let sequences: Vec<(String, Vec<u8>)> = if let Some(gnames) = genomes {
+                // One entry per genome that has this cluster
+                gnames.iter().map(|g| {
+                    (format!("{}__{}", cluster_id, g), dna_bytes.clone())
+                }).collect()
+            } else {
+                // Fallback: single centroid entry (no Roary CSV available)
+                vec![(cluster_id.clone(), dna_bytes)]
+            };
+
+            if sequences.len() < 2 {
+                return None;
+            }
+            Some((cluster_id, sequences))
         })
         .collect();
 
@@ -987,21 +1037,35 @@ fn main() -> anyhow::Result<()> {
                             presence_counts.sort_by_key(|&(n, _)| n);
 
                             // Compute rarefaction data
-                            // Use a deterministic ordering: iterate over genome indices
-                            // and count cumulative unique genes as genomes are added
-                            let genome_order: Vec<usize> = (0..total_genomes).collect();
-                            let mut rarefaction_data: Vec<(usize, usize)> = Vec::new();
-                            let mut seen_genes: std::collections::HashSet<usize> =
-                                std::collections::HashSet::new();
+                            // Average over multiple random genome orderings for a proper
+                            // rarefaction curve (not just input-order accumulation)
+                            let num_rarefaction_samples = num_samples.unwrap_or(100);
+                            let num_rarefaction_samples = num_rarefaction_samples.min(200);
+                            let mut cumulative: Vec<f64> = vec![0.0; total_genomes];
 
-                            for (step, &genome_idx) in genome_order.iter().enumerate() {
-                                for (gene_idx, genomes) in gene_genome_sets.iter().enumerate() {
-                                    if genomes.contains(&genome_idx) {
-                                        seen_genes.insert(gene_idx);
+                            use std::collections::HashSet;
+                            for _ in 0..num_rarefaction_samples {
+                                let mut order: Vec<usize> = (0..total_genomes).collect();
+                                // Fisher-Yates shuffle
+                                use rand::seq::SliceRandom;
+                                let mut rng = rand::thread_rng();
+                                order.shuffle(&mut rng);
+
+                                let mut seen_genes: HashSet<usize> = HashSet::new();
+                                for (step, &genome_idx) in order.iter().enumerate() {
+                                    for (gene_idx, genomes) in gene_genome_sets.iter().enumerate() {
+                                        if genomes.contains(&genome_idx) {
+                                            seen_genes.insert(gene_idx);
+                                        }
                                     }
+                                    cumulative[step] += seen_genes.len() as f64;
                                 }
-                                rarefaction_data.push((step + 1, seen_genes.len()));
                             }
+
+                            let rarefaction_data: Vec<(usize, usize)> = cumulative
+                                .iter().enumerate()
+                                .map(|(i, sum)| (i + 1, (*sum / num_rarefaction_samples as f64).round() as usize))
+                                .collect();
 
                             let output_path = downstream_dir.join("abundance_report.html");
                             match panminer::output::AbundanceVizWriter::write_report(
@@ -1084,7 +1148,8 @@ fn main() -> anyhow::Result<()> {
             }
 
             // Read gene_data.csv and collect sequences based on mode
-            let clusters = read_gene_data_for_msa(&gene_data_path, &mode, total_genomes)?;
+            let roary_path = input.join("gene_presence_absence.csv");
+            let clusters = read_gene_data_for_msa(&gene_data_path, &roary_path, &mode, total_genomes)?;
 
             if clusters.is_empty() {
                 tracing::warn!("No gene clusters match the '{}' filter", mode);

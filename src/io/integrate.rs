@@ -187,8 +187,14 @@ pub fn integrate_genome(
         }
         let gene = &new_genes[*gene_idx];
 
-        // Generate a cluster ID from the gene ID
-        let cluster_id = ClusterId::new(format!("cluster_{}", gene.id));
+        // Generate a cluster ID from the gene ID, avoiding collisions
+        let mut cluster_id = ClusterId::new(format!("cluster_{}", gene.id));
+        if graph.nodes.contains_key(&cluster_id) {
+            cluster_id = ClusterId::new(format!("cluster_{}_new", gene.id));
+        }
+        if graph.nodes.contains_key(&cluster_id) {
+            cluster_id = ClusterId::new(format!("cluster_{}_{}", gene.id, new_node_count));
+        }
 
         let mut cluster = GeneCluster::new(cluster_id.as_str());
         cluster.support = 1;
@@ -420,17 +426,20 @@ fn parse_node_attribute(node: &mut Node, line: &str) {
         }
     } else if line.starts_with("member ") {
         if let Some(members_str) = extract_gml_string(line) {
-            // Semicolon-separated, but we do not know which genome each
-            // member belongs to from the GML alone. Store under a
-            // synthetic "__gml_import__" genome key for round-tripping.
+            // Semicolon-separated gene member IDs. GML format does not
+            // preserve per-genome gene attribution, so we distribute
+            // members across all known genomes for this node. Each genome
+            // gets the full member list (over-estimation, but preserves IDs).
             let members: Vec<String> = members_str
                 .split(';')
                 .map(|s| s.trim().to_string())
                 .filter(|s| !s.is_empty())
                 .collect();
             if !members.is_empty() {
-                node.gene_members
-                    .insert(GenomeId::new("__gml_import__"), members);
+                // Distribute across all known genomes for this node
+                for gid in &node.genomes {
+                    node.gene_members.insert(gid.clone(), members.clone());
+                }
             }
         }
     } else if line.starts_with("contig_end_genomes ") {

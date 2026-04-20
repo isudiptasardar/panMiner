@@ -39,9 +39,20 @@ pub fn write_gff_files(
     // Collect gene entries grouped by genome from the gene_lookup table
     let mut genome_genes: HashMap<GenomeId, Vec<GffGeneEntry>> = HashMap::new();
 
+    // Build reverse index: GeneId -> ClusterId (avoids O(N*M) scan per gene)
+    let gene_to_cluster: HashMap<&str, &str> = graph.nodes.values()
+        .flat_map(|node| {
+            let cid = node.cluster_id.as_str();
+            node.gene_members.values().flat_map(move |ids| {
+                ids.iter().map(move |id| (id.as_str(), cid))
+            })
+        })
+        .collect();
+
     for (gene_id, gene) in &graph.gene_lookup {
-        // Find the cluster this gene belongs to by scanning nodes
-        let cluster_id = find_cluster_for_gene(graph, gene_id);
+        let cluster_id = gene_to_cluster.get(gene_id.as_str())
+            .map(|s| s.to_string())
+            .unwrap_or_else(|| "unknown".to_string());
 
         let entry = GffGeneEntry {
             gene_id: gene_id.as_str().to_string(),
