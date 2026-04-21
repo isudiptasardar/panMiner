@@ -3,6 +3,7 @@
 //! Prunes nodes that represent contig ends (terminal nodes with degree 1)
 //! that have support below a minimum threshold.
 
+use crate::config::CorrectionMode;
 use crate::error::Result;
 use crate::graph::ConcurrentGraph;
 
@@ -14,6 +15,8 @@ use crate::graph::ConcurrentGraph;
 pub struct ContigEndPruner {
     /// Minimum support threshold for keeping a contig-end node
     min_support: usize,
+    /// Maximum iterations for recursive pruning
+    max_iterations: usize,
 }
 
 impl ContigEndPruner {
@@ -21,6 +24,25 @@ impl ContigEndPruner {
     pub fn new() -> Self {
         Self {
             min_support: 1,
+            max_iterations: 100,
+        }
+    }
+
+    /// Create from correction mode and genome count.
+    ///
+    /// Thresholds follow Panaroo conventions:
+    /// - Strict: max(2, ceil(0.05 × n))
+    /// - Default: max(2, ceil(0.01 × n))
+    /// - Sensitive: 2 (minimal removal)
+    pub fn from_mode(mode: &CorrectionMode, num_genomes: usize) -> Self {
+        let min_support = match mode {
+            CorrectionMode::Strict => std::cmp::max(2, (num_genomes as f64 * 0.05).ceil() as usize),
+            CorrectionMode::Default => std::cmp::max(2, (num_genomes as f64 * 0.01).ceil() as usize),
+            CorrectionMode::Sensitive => 2,
+        };
+        Self {
+            min_support,
+            max_iterations: 100,
         }
     }
 
@@ -40,6 +62,10 @@ impl ContigEndPruner {
         let mut iteration = 0;
 
         loop {
+            if iteration >= self.max_iterations {
+                break;
+            }
+
             let to_remove = graph
                 .nodes
                 .iter()
@@ -220,5 +246,29 @@ mod tests {
         // Should not remove because degree > 1
         assert_eq!(stats.nodes_removed, 0);
         assert_eq!(graph.node_count(), 3);
+    }
+
+    #[test]
+    fn test_from_mode_thresholds() {
+        // Strict: max(2, ceil(0.05 * n))
+        let strict = ContigEndPruner::from_mode(&CorrectionMode::Strict, 100);
+        assert_eq!(strict.min_support, 5); // ceil(0.05 * 100) = 5
+
+        let strict_small = ContigEndPruner::from_mode(&CorrectionMode::Strict, 10);
+        assert_eq!(strict_small.min_support, 2); // max(2, ceil(0.5)) = 2
+
+        // Default: max(2, ceil(0.01 * n))
+        let default_mode = ContigEndPruner::from_mode(&CorrectionMode::Default, 100);
+        assert_eq!(default_mode.min_support, 2); // max(2, ceil(1)) = 2
+
+        let default_mode_large = ContigEndPruner::from_mode(&CorrectionMode::Default, 500);
+        assert_eq!(default_mode_large.min_support, 5); // max(2, ceil(5)) = 5
+
+        // Sensitive: always 2
+        let sensitive = ContigEndPruner::from_mode(&CorrectionMode::Sensitive, 100);
+        assert_eq!(sensitive.min_support, 2);
+
+        let sensitive_large = ContigEndPruner::from_mode(&CorrectionMode::Sensitive, 1000);
+        assert_eq!(sensitive_large.min_support, 2);
     }
 }

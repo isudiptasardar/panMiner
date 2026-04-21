@@ -123,21 +123,35 @@ pub fn compute_mds_with_labels(distances: &[Vec<f64>], labels: &[String]) -> Res
     }
 
     // Step 2: Double centering: B = -0.5 * (I - 1/n * 11') * D^2 * (I - 1/n * 11')
+    // Precompute row means, column means, and grand mean (O(n^2) instead of O(n^4))
+    let mut row_means = vec![0.0; n];
+    let mut col_means = vec![0.0; n];
+    let mut grand_mean: f64 = 0.0;
+    for i in 0..n {
+        let row_sum: f64 = d_sq[i].iter().sum();
+        row_means[i] = row_sum / n as f64;
+        grand_mean += row_sum;
+    }
+    grand_mean /= (n * n) as f64;
+    for j in 0..n {
+        let col_sum: f64 = (0..n).map(|k| d_sq[k][j]).sum();
+        col_means[j] = col_sum / n as f64;
+    }
+
     let mut b = vec![vec![0.0; n]; n];
     for i in 0..n {
         for j in 0..n {
-            let row_mean: f64 = d_sq[i].iter().sum::<f64>() / n as f64;
-            let col_mean: f64 = (0..n).map(|k| d_sq[k][j]).sum::<f64>() / n as f64;
-            let grand_mean: f64 = d_sq.iter().flat_map(|r| r.iter()).sum::<f64>() / (n * n) as f64;
-            b[i][j] = -0.5 * (d_sq[i][j] - row_mean - col_mean + grand_mean);
+            b[i][j] = -0.5 * (d_sq[i][j] - row_means[i] - col_means[j] + grand_mean);
         }
     }
 
     // Step 3: Power iteration to find top 2 eigenvectors
+    let max_iterations = 200;
+    let convergence_eps = 1e-10;
     let mut coords = Vec::new();
     for _dim in 0..2 {
         let mut v = vec![1.0 / (n as f64).sqrt(); n];
-        for _ in 0..100 {
+        for _ in 0..max_iterations {
             let mut v_new = vec![0.0; n];
             for i in 0..n {
                 for j in 0..n {
@@ -150,7 +164,15 @@ pub fn compute_mds_with_labels(distances: &[Vec<f64>], labels: &[String]) -> Res
                     *x /= norm;
                 }
             }
+            // Check convergence: ||v_new - v|| < eps
+            let delta: f64 = v_new.iter().zip(v.iter())
+                .map(|(a, b)| (a - b) * (a - b))
+                .sum::<f64>()
+                .sqrt();
             v = v_new;
+            if delta < convergence_eps {
+                break;
+            }
         }
         let mut bv = vec![0.0; n];
         for i in 0..n {

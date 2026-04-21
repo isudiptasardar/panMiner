@@ -55,12 +55,16 @@ impl GmlWriter {
                 }
             }
 
-            // Genome IDs (comma-separated)
+            // Genome IDs (bracket list format for GML compatibility)
             let genome_ids: Vec<String> = node.genomes.iter()
                 .map(|g| g.as_str().to_string())
                 .collect();
             if !genome_ids.is_empty() {
-                writeln!(writer, "    genome_ids \"{}\"", genome_ids.join(","))?;
+                writeln!(writer, "    genomes [")?;
+                for gid in &genome_ids {
+                    writeln!(writer, "      \"{}\"", gid)?;
+                }
+                writeln!(writer, "    ]")?;
             }
 
             // Gene members (semicolon-separated)
@@ -95,12 +99,16 @@ impl GmlWriter {
             writeln!(writer, "    target \"{}\"", edge.to)?;
             writeln!(writer, "    support {}", edge.support)?;
 
-            // Genome IDs on edges
+            // Genome IDs on edges (bracket list format for GML compatibility)
             let edge_genome_ids: Vec<String> = edge.genomes.iter()
                 .map(|g| g.as_str().to_string())
                 .collect();
             if !edge_genome_ids.is_empty() {
-                writeln!(writer, "    genome_ids \"{}\"", edge_genome_ids.join(","))?;
+                writeln!(writer, "    genomes [")?;
+                for gid in &edge_genome_ids {
+                    writeln!(writer, "      \"{}\"", gid)?;
+                }
+                writeln!(writer, "    ]")?;
             }
 
             writeln!(writer, "  ]")?;
@@ -169,7 +177,7 @@ mod tests {
         assert!(content.contains("length"), "GML should have length attribute");
         assert!(content.contains("seq"), "GML should have seq attribute");
         assert!(content.contains("protein"), "GML should have protein attribute");
-        assert!(content.contains("genome_ids"), "GML should have genome_ids attribute");
+        assert!(content.contains("genomes"), "GML should have genomes attribute");
         assert!(content.contains("member"), "GML should have member attribute");
     }
 }

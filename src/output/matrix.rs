@@ -94,26 +94,33 @@ impl MatrixWriter {
         gene_members: &HashMap<String, HashMap<String, Vec<String>>>,
         path: &Path,
     ) -> Result<()> {
-        use std::io::Write;
-        let mut file = std::fs::File::create(path)?;
-        let mut writer = std::io::BufWriter::new(&mut file);
+        let mut wtr = csv::Writer::from_path(path)?;
 
         // Header: 14 fixed columns + per-genome columns
-        write!(writer, "Gene,Non-unique Gene name,Annotation,No. isolates,No. sequences,Avg sequences per isolate,Genome Fragment,Order within Fragment,Accessory Fragment,Accessory Order with Fragment,QC,Min group size nuc,Max group size nuc,Avg group size nuc")?;
-        for name in &matrix.genome_names {
-            write!(writer, ",{}", name)?;
-        }
-        writeln!(writer)?;
+        let mut header: Vec<String> = vec![
+            "Gene".into(), "Non-unique Gene name".into(), "Annotation".into(),
+            "No. isolates".into(), "No. sequences".into(),
+            "Avg sequences per isolate".into(), "Genome Fragment".into(),
+            "Order within Fragment".into(), "Accessory Fragment".into(),
+            "Accessory Order with Fragment".into(), "QC".into(),
+            "Min group size nuc".into(), "Max group size nuc".into(),
+            "Avg group size nuc".into(),
+        ];
+        header.extend(matrix.genome_names.iter().cloned());
+        wtr.write_record(&header)?;
 
         // Data rows
         for (cluster_idx, cluster_id) in matrix.cluster_ids.iter().enumerate() {
             let count_present = matrix.count_present(cluster_idx);
             let avg = if count_present > 0 { "1.00" } else { "0.00" };
 
-            write!(writer, "{},{},,{},{},{},,,,,,,,",
-                cluster_id, cluster_id, count_present, count_present, avg)?;
+            let mut row: Vec<String> = vec![
+                cluster_id.clone(), cluster_id.clone(), String::new(),
+                count_present.to_string(), count_present.to_string(), avg.into(),
+                String::new(), String::new(), String::new(), String::new(),
+                String::new(), String::new(), String::new(), String::new(),
+            ];
 
-            // Get gene members for this cluster
             let members = gene_members.get(cluster_id);
 
             for genome_idx in 0..matrix.num_genomes() {
@@ -121,20 +128,21 @@ impl MatrixWriter {
                 if matrix.get(genome_idx, cluster_idx) {
                     if let Some(members) = members {
                         if let Some(gene_ids) = members.get(genome_name) {
-                            write!(writer, ",{}", gene_ids.join(";"))?;
+                            row.push(gene_ids.join(";"));
                         } else {
-                            write!(writer, ",{}", cluster_id)?;
+                            row.push(cluster_id.clone());
                         }
                     } else {
-                        write!(writer, ",{}", cluster_id)?;
+                        row.push(cluster_id.clone());
                     }
                 } else {
-                    write!(writer, ",")?;
+                    row.push(String::new());
                 }
             }
-            writeln!(writer)?;
+            wtr.write_record(&row)?;
         }
 
+        wtr.flush()?;
         Ok(())
     }
 }

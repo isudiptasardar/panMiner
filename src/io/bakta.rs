@@ -335,8 +335,14 @@ fn resolve_db_path(explicit_path: Option<&Path>) -> PathBuf {
         }
     }
 
-    // Return a sensible default even if it doesn't exist yet
-    PathBuf::from("~/.bakta/db")
+    // Return best-effort default using detected HOME/USERPROFILE
+    if let Ok(home) = std::env::var("HOME") {
+        PathBuf::from(home).join(".bakta").join("db")
+    } else if let Ok(userprofile) = std::env::var("USERPROFILE") {
+        PathBuf::from(userprofile).join(".bakta").join("db")
+    } else {
+        PathBuf::from(".bakta_db")
+    }
 }
 
 /// Check if a file has a GFF/GFF3 extension.

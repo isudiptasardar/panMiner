@@ -169,6 +169,7 @@ pub fn load_gml_graph(path: &PathBuf) -> Result<PangenomeGraph> {
     let mut current_edge: Option<Edge> = None;
     let mut in_node = false;
     let mut in_edge = false;
+    let mut in_genomes = false;
 
     for line in content.lines() {
         let line = line.trim();
@@ -176,6 +177,8 @@ pub fn load_gml_graph(path: &PathBuf) -> Result<PangenomeGraph> {
         if line == "node [" {
             in_node = true;
             current_node = None;
+        } else if line == "]" && in_genomes {
+            in_genomes = false;
         } else if line == "]" && in_node {
             if let Some(node) = current_node.take() {
                 graph.nodes.insert(node.cluster_id.clone(), node);
@@ -189,6 +192,18 @@ pub fn load_gml_graph(path: &PathBuf) -> Result<PangenomeGraph> {
                 graph.edges.insert(key, edge);
             }
             in_edge = false;
+        } else if in_genomes && line.starts_with('"') {
+            let genome_id = line.trim_matches('"').to_string();
+            let gid = crate::graph::GenomeId::new(genome_id);
+            if in_node {
+                if let Some(node) = &mut current_node {
+                    node.genomes.insert(gid);
+                }
+            } else if in_edge {
+                if let Some(edge) = &mut current_edge {
+                    edge.genomes.insert(gid);
+                }
+            }
         } else if in_node {
             if let Some(node) = &mut current_node {
                 if line.starts_with("label") {
@@ -198,6 +213,8 @@ pub fn load_gml_graph(path: &PathBuf) -> Result<PangenomeGraph> {
                     if let Some(s) = line.split_whitespace().nth(1) {
                         node.support = s.parse().unwrap_or(1);
                     }
+                } else if line.starts_with("genomes [") {
+                    in_genomes = true;
                 }
             } else {
                 // Create a default node
@@ -223,10 +240,12 @@ pub fn load_gml_graph(path: &PathBuf) -> Result<PangenomeGraph> {
                     if let Some(s) = line.split('"').nth(1) {
                         edge.to = ClusterId::new(s);
                     }
-                } else if line.starts_with("value") {
+                } else if line.starts_with("support") {
                     if let Some(s) = line.split_whitespace().nth(1) {
                         edge.support = s.parse().unwrap_or(1);
                     }
+                } else if line.starts_with("genomes [") {
+                    in_genomes = true;
                 }
             }
         }

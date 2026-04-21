@@ -37,13 +37,10 @@ impl DistanceCache {
         self.distances.insert(key, identity);
     }
 
-    /// Look up a cached distance between two clusters.
-    /// Avoids allocation by scanning entries with &str comparison.
+    /// Look up a cached distance between two clusters (O(1) via HashMap).
     pub fn get(&self, a: &str, b: &str) -> Option<f64> {
-        let (lo, hi) = Self::normalize_key_parts(a, b);
-        self.distances.iter()
-            .find(|((k1, k2), _)| k1.as_str() == lo && k2.as_str() == hi)
-            .map(|(_, v)| *v)
+        let key = Self::normalize_key(a, b);
+        self.distances.get(&key).copied()
     }
 
     /// Get the number of cached distances.
@@ -63,11 +60,6 @@ impl DistanceCache {
         } else {
             (b.to_string(), a.to_string())
         }
-    }
-
-    /// Returns (lo, hi) without allocating, for lookup.
-    fn normalize_key_parts<'a>(a: &'a str, b: &'a str) -> (&'a str, &'a str) {
-        if a < b { (a, b) } else { (b, a) }
     }
 }
 

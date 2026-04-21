@@ -80,10 +80,8 @@ impl Scoary2Runner {
             return Err(Error::Config("No genomes found in presence/absence CSV.".to_string()));
         }
 
-        let temp_dir = std::env::temp_dir().join("panminer_scoary2");
-        std::fs::create_dir_all(&temp_dir)?;
-
-        let scoary_pa_path = temp_dir.join("presence_absence.csv");
+        let temp_dir = tempfile::tempdir()?;
+        let scoary_pa_path = temp_dir.path().join("presence_absence.csv");
         self.write_scoary_pa_csv(&scoary_pa_path, &gene_ids, &genome_ids, &presence_matrix)?;
 
         let phenotypes_content = std::fs::read_to_string(phenotypes_path)?;
@@ -91,7 +89,7 @@ impl Scoary2Runner {
 
         let downstream_dir = output_dir.join("downstream");
         std::fs::create_dir_all(&downstream_dir)?;
-        let results_dir = temp_dir.join("results");
+        let results_dir = temp_dir.path().join("results");
 
         let mut cmd = Command::new(&self.scoary2_path);
         cmd.arg("-t").arg(phenotypes_path)
@@ -129,26 +127,26 @@ impl Scoary2Runner {
         let mut rdr = csv::Reader::from_path(path)?;
         let headers = rdr.headers()?.clone();
 
-        if headers.len() < 4 {
+        if headers.len() < 15 {
             return Err(Error::Config(format!(
-                "Invalid P/A CSV format: expected at least 4 columns, got {}",
+                "Invalid P/A CSV format: expected at least 15 columns (14 metadata + genomes), got {}",
                 headers.len()
             )));
         }
 
-        let genome_ids: Vec<String> = headers.iter().skip(3).map(|s| s.to_string()).collect();
+        let genome_ids: Vec<String> = headers.iter().skip(14).map(|s| s.to_string()).collect();
         let mut gene_ids = Vec::new();
         let mut presence_matrix = Vec::new();
 
         for result in rdr.records() {
             let record = result?;
-            if record.len() < 4 {
+            if record.len() < 15 {
                 continue;
             }
             let gene_id = record.get(0).unwrap_or("").to_string();
             gene_ids.push(gene_id);
 
-            let presence: Vec<u8> = record.iter().skip(3).map(|cell| {
+            let presence: Vec<u8> = record.iter().skip(14).map(|cell| {
                 let val = cell.trim();
                 if val.is_empty() || val == "0" { 0 } else { 1 }
             }).collect();
@@ -175,19 +173,61 @@ impl Scoary2Runner {
         Ok(())
     }
 
-    fn validate_phenotypes(&self, content: &str, _expected_genomes: &[String]) -> Result<()> {
-        let first_line = content.lines().next().unwrap_or_default();
-        let fields: Vec<&str> = if first_line.contains('\t') {
-            first_line.split('\t').collect()
+    fn validate_phenotypes(&self, content: &str, expected_genomes: &[String]) -> Result<()> {
+        let mut lines = content.lines();
+        let first_line = lines.next().unwrap_or_default();
+        let delimiter = if first_line.contains('\t') {
+            '\t'
         } else if first_line.contains(',') {
-            first_line.split(',').collect()
+            ','
         } else {
-            return Err(Error::Config(format!("Phenotypes file must be TSV or CSV format, got: {}", first_line)));
+            return Err(Error::Config(format!(
+                "Phenotypes file must be TSV or CSV format, got: {}",
+                first_line
+            )));
         };
 
+        let fields: Vec<&str> = first_line.split(delimiter).collect();
         if fields.len() < 2 {
-            return Err(Error::Config("Phenotypes file must have at least 2 columns (genome, phenotype)".to_string()));
+            return Err(Error::Config(
+                "Phenotypes file must have at least 2 columns (genome, phenotype)".to_string(),
+            ));
         }
+
+        // Verify that genome IDs in the phenotypes file exist in the P/A matrix
+        let expected_set: std::collections::HashSet<&str> =
+            expected_genomes.iter().map(|s| s.as_str()).collect();
+        let mut missing: Vec<String> = Vec::new();
+
+        // Check all lines (including header) for genome IDs not in P/A matrix
+        for line in content.lines() {
+            let line = line.trim();
+            if line.is_empty() {
+                continue;
+            }
+            let row: Vec<&str> = line.split(delimiter).collect();
+            if let Some(genome_id) = row.first() {
+                let id = genome_id.trim();
+                // Skip non-genome-ID header values
+                if id.is_empty() || id.eq_ignore_ascii_case("genome") || id.eq_ignore_ascii_case("sample") || id.eq_ignore_ascii_case("id") {
+                    continue;
+                }
+                if !expected_set.contains(id) {
+                    missing.push(id.to_string());
+                }
+            }
+        }
+
+        missing.sort();
+        missing.dedup();
+
+        if !missing.is_empty() {
+            return Err(Error::Config(format!(
+                "Phenotypes file contains genome IDs not found in P/A matrix: {}",
+                missing.join(", ")
+            )));
+        }
+
         Ok(())
     }
 
@@ -362,10 +402,18 @@ mod tests {
 
     fn make_test_pa_csv(path: &Path) -> Result<()> {
         let mut wtr = csv::Writer::from_path(path)?;
-        wtr.write_record(&["gene", "annotation", "cluster_id", "genome1", "genome2", "genome3", "genome4"])?;
-        wtr.write_record(&["gene_001", "hypothetical protein", "cluster_001", "1", "1", "0", "0"])?;
-        wtr.write_record(&["gene_002", "transposase", "cluster_002", "1", "0", "1", "0"])?;
-        wtr.write_record(&["gene_003", "ABC transporter", "cluster_003", "0", "1", "1", "1"])?;
+        // Roary CSV format: 14 metadata columns + per-genome columns
+        wtr.write_record(&[
+            "Gene", "Non-unique Gene name", "Annotation", "No. isolates",
+            "No. sequences", "Avg sequences per isolate", "Genome Fragment",
+            "Order within Fragment", "Accessory Fragment",
+            "Accessory Order with Fragment", "QC",
+            "Min group size nuc", "Max group size nuc", "Avg group size nuc",
+            "genome1", "genome2", "genome3", "genome4",
+        ])?;
+        wtr.write_record(&["gene_001", "gene_001", "hypothetical protein", "2", "2", "1.00", "", "", "", "", "", "", "", "", "gene_001", "gene_001", "", ""])?;
+        wtr.write_record(&["gene_002", "gene_002", "transposase", "2", "2", "1.00", "", "", "", "", "", "", "", "", "gene_002", "", "gene_002", ""])?;
+        wtr.write_record(&["gene_003", "gene_003", "ABC transporter", "3", "3", "1.00", "", "", "", "", "", "", "", "", "", "gene_003", "gene_003", "gene_003"])?;
         wtr.flush()?;
         Ok(())
     }

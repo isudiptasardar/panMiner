@@ -41,7 +41,7 @@ impl JsonWriter {
         path: &Path,
     ) -> Result<()> {
         let total_genomes = graph.genomes.len().max(1);
-        let core_threshold = (total_genomes as f32 * 0.99).ceil() as usize;
+        let core_threshold = (total_genomes as f64 * 0.99).ceil() as usize;
 
         let mut clusters: Vec<ClusterSummary> = Vec::new();
         let mut num_core = 0;
@@ -207,7 +207,7 @@ impl JsonWriter {
         }
 
         let total_genomes = graph.genomes.len().max(1);
-        let core_threshold = (total_genomes as f32 * 0.99).ceil() as usize;
+        let core_threshold = (total_genomes as f64 * 0.99).ceil() as usize;
 
         let mut num_core = 0;
         for node in graph.nodes.values() {

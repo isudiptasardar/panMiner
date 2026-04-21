@@ -67,10 +67,18 @@ impl AlignmentRunner for PrankRunner {
             }
         }
 
+        // PRANK writes output to a file (not stdout). Use a temp directory
+        // and -o flag to control the output path.
+        let temp_dir = tempfile::tempdir()
+            .map_err(|e| Error::Alignment(format!("Failed to create temp dir for PRANK: {}", e)))?;
+        let output_stem = temp_dir.path().join("prank_output");
+
         // Build PRANK command with stdin input
         let mut cmd = Command::new(&self.executable);
         cmd.arg("-d").arg("-"); // Read from stdin
+        cmd.arg("-o").arg(&output_stem); // Output file stem (PRANK adds .fas extension)
         cmd.arg("-quiet"); // Reduce output
+        cmd.arg("-fasta"); // Output in FASTA format
 
         if self.show_phylogeny {
             cmd.arg("-showphylogeny");
@@ -93,7 +101,6 @@ impl AlignmentRunner for PrankRunner {
         }
 
         let output = child.wait_with_output()?;
-        let output = output; // Rename to avoid shadowing
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
@@ -103,10 +110,25 @@ impl AlignmentRunner for PrankRunner {
             )));
         }
 
-        // PRANK outputs to stdout by default when using stdin
-        let stdout = String::from_utf8_lossy(&output.stdout);
+        // PRANK writes output to a file (default: prank_output.fas)
+        let output_path = output_stem.with_extension("fas");
+        let aligned_content = if output_path.exists() {
+            std::fs::read_to_string(&output_path)
+                .map_err(|e| Error::Alignment(format!("Failed to read PRANK output file: {}", e)))?
+        } else {
+            // Some PRANK versions use .fasta extension
+            let alt_path = output_stem.with_extension("fasta");
+            if alt_path.exists() {
+                std::fs::read_to_string(&alt_path)
+                    .map_err(|e| Error::Alignment(format!("Failed to read PRANK output file: {}", e)))?
+            } else {
+                return Err(Error::Alignment(
+                    "PRANK output file not found. PRANK may have failed silently.".to_string()
+                ));
+            }
+        };
 
-        let (aligned_sequences, alignment_length) = parse_fasta(&stdout);
+        let (aligned_sequences, alignment_length) = parse_fasta(&aligned_content);
 
         if aligned_sequences.is_empty() {
             return Err(Error::Alignment("No sequences in PRANK output".to_string()));
@@ -115,7 +137,7 @@ impl AlignmentRunner for PrankRunner {
         Ok(AlignmentResult {
             num_sequences: aligned_sequences.len(),
             alignment_length,
-            aligned_fasta: stdout.to_string(),
+            aligned_fasta: aligned_content,
             tool: AlignmentTool::Prank,
         })
     }
@@ -138,7 +160,6 @@ fn parse_fasta(fasta: &str) -> (Vec<(String, Vec<u8>)>, usize) {
     let mut sequences = Vec::new();
     let mut current_name = String::new();
     let mut current_seq = Vec::new();
-    let mut alignment_length: Option<usize> = None;
 
     for line in fasta.lines() {
         if line.starts_with('>') {
@@ -153,9 +174,6 @@ fn parse_fasta(fasta: &str) -> (Vec<(String, Vec<u8>)>, usize) {
             let trimmed = line.trim();
             if !trimmed.is_empty() {
                 current_seq.extend_from_slice(trimmed.as_bytes());
-                if alignment_length.is_none() {
-                    alignment_length = Some(trimmed.len());
-                }
             }
         }
     }
@@ -165,7 +183,10 @@ fn parse_fasta(fasta: &str) -> (Vec<(String, Vec<u8>)>, usize) {
         sequences.push((current_name, current_seq));
     }
 
-    (sequences, alignment_length.unwrap_or(0))
+    // Alignment length = length of the first complete sequence (all lines concatenated)
+    let alignment_length = sequences.first().map(|(_, seq)| seq.len()).unwrap_or(0);
+
+    (sequences, alignment_length)
 }
 
 #[cfg(test)]

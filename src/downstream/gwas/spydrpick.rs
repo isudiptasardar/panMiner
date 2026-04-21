@@ -92,7 +92,8 @@ impl SpydrPickRunner {
                         if val == "1" || val.to_lowercase() == "true" || val.to_lowercase() == "present" { 1 } else { 0 }
                     }).collect()
                 } else {
-                    fields[1..genes.len()+1].iter().map(|s| {
+                    let end = std::cmp::min(genes.len() + 1, fields.len());
+                    fields[1..end].iter().map(|s| {
                         let val = s.trim();
                         if val == "1" || val.to_lowercase() == "true" || val.to_lowercase() == "present" { 1 } else { 0 }
                     }).collect()
@@ -103,8 +104,10 @@ impl SpydrPickRunner {
 
         if genomes.is_empty() { return Err(Error::InvalidInput("P/A matrix is empty".to_string())); }
         if genes.is_empty() && !matrix.is_empty() {
-            let first_row_len = matrix[0].len();
-            genes = (1..=first_row_len).map(|i| format!("gene_{}", i)).collect();
+            if !matrix[0].is_empty() {
+                let first_row_len = matrix[0].len();
+                genes = (1..=first_row_len).map(|i| format!("gene_{}", i)).collect();
+            }
         }
         Ok((genomes, genes, matrix))
     }
@@ -197,16 +200,19 @@ impl DownstreamRunner for SpydrPickRunner {
         let pa_file = Self::find_pa_file(output_dir)?;
         let (genomes, genes, matrix) = Self::read_pa_matrix(&pa_file)?;
         if genomes.is_empty() || genes.is_empty() || matrix.is_empty() {
-            return Err(Error::InvalidInput("P/A matrix is empty".to_string()));
+            return Ok(SpydrPickResult {
+                correlations: Vec::new(),
+                num_genomes: genomes.len(),
+                num_genes: genes.len(),
+            });
         }
 
-        let temp_dir = std::env::temp_dir().join("panminer_spydrpick");
-        fs::create_dir_all(&temp_dir).map_err(|e| {
+        let temp_dir = tempfile::TempDir::new().map_err(|e| {
             Error::InvalidInput(format!("Failed to create temp directory: {}", e))
         })?;
 
-        let input_path = temp_dir.join("spydrpick_input.tsv");
-        let output_prefix = temp_dir.join("spydrpick_output");
+        let input_path = temp_dir.path().join("spydrpick_input.tsv");
+        let output_prefix = temp_dir.path().join("spydrpick_output");
 
         Self::write_spydrpick_input(&genomes, &genes, &matrix, &input_path)?;
 
@@ -228,7 +234,7 @@ impl DownstreamRunner for SpydrPickRunner {
             )));
         }
 
-        let output_files: Vec<_> = fs::read_dir(&temp_dir)
+        let output_files: Vec<_> = fs::read_dir(temp_dir.path())
             .ok()
             .into_iter()
             .flatten()
@@ -243,7 +249,7 @@ impl DownstreamRunner for SpydrPickRunner {
         let correlations = if !output_files.is_empty() {
             Self::parse_spydrpick_output(&output_files[0])?
         } else {
-            let alt_output = temp_dir.join("spydrpick_output.correlations");
+            let alt_output = temp_dir.path().join("spydrpick_output.correlations");
             if alt_output.exists() {
                 Self::parse_spydrpick_output(&alt_output)?
             } else {

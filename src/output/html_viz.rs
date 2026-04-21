@@ -10,6 +10,15 @@ use std::io::Write;
 use crate::error::Result;
 use crate::graph::{PangenomeGraph, BitPackedMatrix};
 
+/// Escape special HTML characters to prevent XSS injection.
+fn html_escape(s: &str) -> String {
+    s.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
+        .replace('\'', "&#x27;")
+}
+
 /// HTML visualization writer.
 #[allow(dead_code)]
 pub struct HtmlVizWriter;
@@ -47,7 +56,7 @@ impl HtmlVizWriter {
             .map(|(_, name)| {
                 format!(
                     "<div class=\"genome_filter\"><input type=\"checkbox\" checked><span class=\"genome_name\">{}</span></div>",
-                    name
+                    html_escape(name)
                 )
             })
             .collect();
@@ -160,6 +169,7 @@ impl HtmlVizWriter {
 
         // JavaScript
         html.push_str("    <script>\n");
+        html.push_str("        function escapeHtml(s) { return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/\"/g,'&quot;').replace(/'/g,'&#x27;'); }\n");
         html.push_str("        const nodeData = ");
         html.push_str(&node_data);
         html.push_str(";\n");
@@ -182,8 +192,8 @@ impl HtmlVizWriter {
         html.push_str("            const g = svg.append(\"g\").attr(\"transform\", \"translate(\" + width/2 + \",\" + height/2 + \")\");\n");
         html.push_str("            const color = d3.scaleOrdinal().domain([0, 1]).range([\"rgb(233,69,96)\", \"rgb(78,204,196)\"]);\n");
         html.push_str("            const link = g.append(\"g\").attr(\"class\", \"links\").selectAll(\"line\").data(edgeData).enter().append(\"line\").attr(\"class\", \"link\").attr(\"stroke\", \"rgb(102,102,102)\").attr(\"stroke-width\", function(d) { return Math.sqrt(d.weight) / 2; });\n");
-        html.push_str("            link.on(\"mouseover\", function(event, d) { tooltip.style(\"display\", \"block\").html(\"Edge: \" + d.source + \" -> \" + d.target + \"<br/>Support: \" + d.support).style(\"left\", (event.pageX + 10) + \"px\").style(\"top\", (event.pageY + 10) + \"px\"); }).on(\"mouseout\", function() { tooltip.style(\"display\", \"none\"); });\n");
-        html.push_str("            const node = g.append(\"g\").attr(\"class\", \"nodes\").selectAll(\"circle\").data(nodeData).enter().append(\"circle\").attr(\"class\", function(d) { return \"node_circle \" + (d.support === genomeNames.length ? \"supported\" : \"accessory\"); }).attr(\"r\", function(d) { return Math.min(20, Math.max(5, Math.log2(d.genes + 1) * 3)); }).attr(\"fill\", function(d) { return color(d.support / genomeNames.length); }).attr(\"stroke\", \"rgb(34,34,34)\").attr(\"stroke-width\", 1.5).call(d3.drag().on(\"start\", dragstarted).on(\"drag\", dragged).on(\"end\", dragended)).on(\"mouseover\", function(event, d) { tooltip.style(\"display\", \"block\").html(\"<h4>\" + d.clusterId + \"</h4><div class=meta><span>Support:</span> \" + d.support + \" / \" + genomeNames.length + \"<br/><span>Genes:</span> \" + d.genes + \"<br/><span>Paralog:</span> \" + (d.isParalog ? \"Yes\" : \"No\") + \"</div><div class=genome_list>\" + d.genomes.map(function(g) { return \"<span class=genome>\" + (genomeNames[g] || \"Unknown\") + \"</span>\"; }).join(\"\") + \"</div>\").style(\"left\", (event.pageX + 10) + \"px\").style(\"top\", (event.pageY + 10) + \"px\"); }).on(\"mouseout\", function() { tooltip.style(\"display\", \"none\"); });\n");
+        html.push_str("            link.on(\"mouseover\", function(event, d) { tooltip.style(\"display\", \"block\").html(\"Edge: \" + escapeHtml(d.source) + \" -> \" + escapeHtml(d.target) + \"<br/>Support: \" + d.support).style(\"left\", (event.pageX + 10) + \"px\").style(\"top\", (event.pageY + 10) + \"px\"); }).on(\"mouseout\", function() { tooltip.style(\"display\", \"none\"); });\n");
+        html.push_str("            const node = g.append(\"g\").attr(\"class\", \"nodes\").selectAll(\"circle\").data(nodeData).enter().append(\"circle\").attr(\"class\", function(d) { return \"node_circle \" + (d.support === genomeNames.length ? \"supported\" : \"accessory\"); }).attr(\"r\", function(d) { return Math.min(20, Math.max(5, Math.log2(d.genes + 1) * 3)); }).attr(\"fill\", function(d) { return color(d.support / genomeNames.length); }).attr(\"stroke\", \"rgb(34,34,34)\").attr(\"stroke-width\", 1.5).call(d3.drag().on(\"start\", dragstarted).on(\"drag\", dragged).on(\"end\", dragended)).on(\"mouseover\", function(event, d) { tooltip.style(\"display\", \"block\").html(\"<h4>\" + escapeHtml(d.clusterId) + \"</h4><div class=meta><span>Support:</span> \" + d.support + \" / \" + genomeNames.length + \"<br/><span>Genes:</span> \" + d.genes + \"<br/><span>Paralog:</span> \" + (d.isParalog ? \"Yes\" : \"No\") + \"</div><div class=genome_list>\" + d.genomes.map(function(g) { return \"<span class=genome>\" + escapeHtml(genomeNames[g] || \"Unknown\") + \"</span>\"; }).join(\"\") + \"</div>\").style(\"left\", (event.pageX + 10) + \"px\").style(\"top\", (event.pageY + 10) + \"px\"); }).on(\"mouseout\", function() { tooltip.style(\"display\", \"none\"); });\n");
         html.push_str("            const simulation = d3.forceSimulation(nodeData).force(\"link\", d3.forceLink(edgeData).id(function(d) { return d.id; }).distance(function(d) { return 50 + Math.log2(d.weight + 1) * 20; })).force(\"charge\", d3.forceManyBody().strength(-500).theta(0.5)).force(\"center\", d3.forceCenter(0, 0)).force(\"collide\", d3.forceCollide().radius(function(d) { return Math.min(20, Math.max(5, Math.log2(d.genes + 1) * 3)) + 5; })).alphaDecay(0.01).alphaMin(0.001).on(\"tick\", ticked);\n");
         html.push_str("            function ticked() { link.attr(\"x1\", function(d) { return d.source.x; }).attr(\"y1\", function(d) { return d.source.y; }).attr(\"x2\", function(d) { return d.target.x; }).attr(\"y2\", function(d) { return d.target.y; }); node.attr(\"cx\", function(d) { return d.x; }).attr(\"cy\", function(d) { return d.y; }); }\n");
         html.push_str("            function dragstarted(event, d) { if (!event.active) simulation.alphaTarget(0.3).restart(); d.fx = d.x; d.fy = d.y; }\n");

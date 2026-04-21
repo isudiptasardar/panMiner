@@ -62,10 +62,19 @@ impl PanminerPipeline {
 
         // Filter out genomes that failed QC
         let input_files = if !qc_results.is_empty() {
+            if qc_results.len() != self.config.input_files.len() {
+                tracing::warn!(
+                    "QC results count ({}) doesn't match input files count ({}). Some QC runs may have failed.",
+                    qc_results.len(),
+                    self.config.input_files.len()
+                );
+            }
             let passed_files: Vec<PathBuf> = self.config.input_files.iter()
-                .zip(qc_results.iter())
-                .filter(|(_, qc)| qc.passed)
-                .map(|(path, _)| path.clone())
+                .enumerate()
+                .filter(|(i, _)| {
+                    qc_results.get(*i).map(|qc| qc.passed).unwrap_or(true)
+                })
+                .map(|(_, path)| path.clone())
                 .collect();
 
             let removed = self.config.input_files.len() - passed_files.len();
@@ -130,6 +139,12 @@ impl PanminerPipeline {
                 .map(|g| (g.id.to_string(), g.genome_id.clone()))
                 .collect();
 
+            // Build gene data map for O(1) lookup (same as GraphBuilder)
+            let gene_data_map: std::collections::HashMap<crate::graph::GeneId, Gene> = genes
+                .iter()
+                .map(|g| (g.id.clone(), g.clone()))
+                .collect();
+
             clusters.par_iter().for_each(|cluster| {
                 let mut node = Node::from_cluster(cluster);
                 for gene_id in &cluster.genes {
@@ -137,14 +152,13 @@ impl PanminerPipeline {
                         node.genomes.insert(genome_id.clone());
                     }
                 }
-                // Add contig DNA to nodes in streaming path too
+                // Add contig DNA to nodes using O(1) gene data lookup
                 for gene_id in &cluster.genes {
                     if let Some(genome_id) = gene_to_genome.get(gene_id.as_str()) {
-                        let gene = genes.iter().find(|g| g.id == *gene_id);
-                        if let Some(g) = gene {
-                            let key = (genome_id.clone(), g.contig.clone());
+                        if let Some(gene) = gene_data_map.get(gene_id) {
+                            let key = (genome_id.clone(), gene.contig.clone());
                             if let Some(full_dna) = contig_dna.get(&key) {
-                                node.add_contig_sequence(g.contig.clone(), full_dna.clone());
+                                node.add_contig_sequence(gene.contig.clone(), full_dna.clone());
                             }
                         }
                     }
@@ -213,13 +227,7 @@ impl PanminerPipeline {
         let writer = OutputWriter::new(&self.config);
 
         // Build gene_members map for Roary CSV output
-        let gene_members: HashMap<String, HashMap<String, Vec<String>>> =
-            graph.nodes.iter().map(|(cid, node)| {
-                let inner: HashMap<String, Vec<String>> = node.gene_members.iter()
-                    .map(|(gid, genes)| (gid.as_str().to_string(), genes.clone()))
-                    .collect();
-                (cid.as_str().to_string(), inner)
-            }).collect();
+        let gene_members = graph.build_gene_members_map();
 
         let mut paths = writer.write_all(&graph, &matrix, &gene_members)?;
 
@@ -396,13 +404,7 @@ impl PanminerPipeline {
         let writer = OutputWriter::new(&self.config);
 
         // Build gene_members map for Roary CSV output
-        let gene_members: HashMap<String, HashMap<String, Vec<String>>> =
-            graph.nodes.iter().map(|(cid, node)| {
-                let inner: HashMap<String, Vec<String>> = node.gene_members.iter()
-                    .map(|(gid, genes)| (gid.as_str().to_string(), genes.clone()))
-                    .collect();
-                (cid.as_str().to_string(), inner)
-            }).collect();
+        let gene_members = graph.build_gene_members_map();
 
         let mut output_paths = writer.write_all(&graph, &matrix, &gene_members)?;
 
@@ -532,13 +534,7 @@ impl PanminerPipeline {
             }
 
             let writer = OutputWriter::new(&self.config);
-            let gene_members: HashMap<String, HashMap<String, Vec<String>>> =
-                graph.nodes.iter().map(|(cid, node)| {
-                    let inner: HashMap<String, Vec<String>> = node.gene_members.iter()
-                        .map(|(gid, genes)| (gid.as_str().to_string(), genes.clone()))
-                        .collect();
-                    (cid.as_str().to_string(), inner)
-                }).collect();
+            let gene_members = graph.build_gene_members_map();
             let output_paths = writer.write_all(&graph, &matrix, &gene_members)?;
 
             if self.config.enable_qc {
@@ -783,15 +779,20 @@ impl PanminerPipeline {
                         .unwrap_or("unknown")
                 );
 
-                let (genes, contigs) = GffParser::open(path, genome_id.clone())
+                match GffParser::open(path, genome_id.clone())
                     .and_then(|p: crate::io::GffParser| p.parse_genes_and_contigs())
-                    .unwrap_or_default();
-
-                if genes.is_empty() {
-                    tracing::warn!("No genes found in {:?}", path);
+                {
+                    Ok((genes, contigs)) => {
+                        if genes.is_empty() {
+                            tracing::warn!("No genes found in {:?}", path);
+                        }
+                        (genes, genome_id, contigs)
+                    }
+                    Err(e) => {
+                        tracing::error!("Failed to parse {:?}: {}. Genome will be excluded from analysis.", path, e);
+                        (Vec::new(), genome_id, HashMap::new())
+                    }
                 }
-
-                (genes, genome_id, contigs)
             })
             .collect();
 
@@ -838,8 +839,16 @@ impl PanminerPipeline {
 
     /// Run error correction on the graph.
     fn run_corrections(&self, graph: &ConcurrentGraph, num_genomes: usize) -> Result<()> {
+        // Correction pipeline follows Panaroo's validated order:
+        // 1. collapse_paralogs
+        // 2. collapse_families (mistranslation, DNA, 0.98)
+        // 3. collapse_families (families, protein, 0.7)
+        // 4. trim_low_support_trailing_ends
+        // 5. find_missing
+        // 6. collapse_families (re-collapse)
+        // 7. clean_misassembly_edges
+
         // Phase 4.0: Paralog resolution (must run before other corrections)
-        // Detects paralog clusters and merges copies that share synteny context
         tracing::info!("Phase 4.0: Running paralog resolution");
         let resolver = ParalogResolver::new();
         let paralog_stats = resolver.resolve(graph)?;
@@ -849,16 +858,12 @@ impl PanminerPipeline {
             paralog_stats.nodes_merged
         );
 
-        // Contamination removal
+        // Phase 4.1: Contamination removal (PanMiner extension — Panaroo lacks this step)
         let remover = ContaminationRemover::from_mode(&self.config.mode, num_genomes);
         remover.remove(graph)?;
 
-        // Contig-end pruning
-        let pruner = ContigEndPruner::new()
-            .with_min_support(self.config.min_support);
-        pruner.prune(graph)?;
-
-        // Fragment merging with iterative multi-threshold collapsing
+        // Phase 4.2: Fragment merging with iterative multi-threshold collapsing
+        // (matches Panaroo steps 2-3: collapse_families mistranslation + families)
         let merger = FragmentMerger::new()
             .with_collapse_thresholds(self.config.collapse_thresholds.clone());
 
@@ -890,20 +895,36 @@ impl PanminerPipeline {
         // Create distance cache for reuse across correction passes (matches Panaroo Step 7->10)
         let mut distance_cache = DistanceCache::new();
 
-        // Mistranslation correction stays at identity 0.99 (unchanged)
+        // Mistranslation correction at identity 0.99 (Panaroo step 2)
         merger.correct_mistranslations(graph, &sequences)?;
 
+        // Rebuild sequences after mistranslation correction (graph was modified)
+        let sequences: std::collections::HashMap<String, Vec<u8>> = graph
+            .nodes
+            .iter()
+            .flat_map(|entry| {
+                let cluster_id = entry.key().clone();
+                let centroids = entry.value().centroid_sequences.clone();
+                centroids.into_iter().enumerate().filter_map(move |(i, seq)| {
+                    if seq.is_empty() {
+                        None
+                    } else if i == 0 {
+                        Some((cluster_id.to_string(), seq))
+                    } else {
+                        Some((format!("{}_centroid{}", cluster_id, i), seq))
+                    }
+                })
+            })
+            .collect();
+
         // Iterative gene family collapsing from high to low threshold
-        // (matches Panaroo's progressive collapse_families behavior)
+        // (matches Panaroo step 3: collapse_families progressive collapsing)
         let mut total_collapsed = 0usize;
         for threshold in merger.collapse_thresholds() {
             let collapsed = merger.collapse_gene_families_with_threshold(
                 graph, &sequences, *threshold, Some(&mut distance_cache)
             )?;
             total_collapsed += collapsed;
-            // Continue to lower thresholds even if no merges at current level,
-            // because a merge at a higher threshold may create new pairs that
-            // can merge at lower thresholds (matches Panaroo's behavior).
         }
         tracing::info!(
             "Iterative gene family collapsing: {} total merges across {} thresholds",
@@ -911,15 +932,23 @@ impl PanminerPipeline {
             self.config.collapse_thresholds.len()
         );
 
-        // Phase 4.5: Missing gene recovery (optional)
-        // This searches for genes that may have been missed during annotation
-        // by looking at flanking sequences around expected gene locations.
-        // It requires contig sequences to be stored in the graph nodes.
-        tracing::info!("Phase 4.5: Running missing gene recovery");
+        // Phase 4.3: Contig-end pruning (Panaroo step 4: trim_low_support_trailing_ends)
+        // Must run AFTER collapsing so that merged nodes are properly evaluated
+        let pruner = ContigEndPruner::from_mode(&self.config.mode, num_genomes);
+        let pruning_stats = pruner.prune(graph)?;
+        tracing::info!(
+            "Contig-end pruning: removed {} nodes in {} iterations",
+            pruning_stats.nodes_removed,
+            pruning_stats.iterations
+        );
+
+        // Phase 4.4: Missing gene recovery (Panaroo step 5: find_missing)
+        tracing::info!("Phase 4.4: Running missing gene recovery");
         self.run_missing_gene_recovery(graph)?;
 
-        // Phase 4.6: Re-collapse families after missing gene recovery (reuses distance cache)
-        tracing::info!("Phase 4.6: Re-collapsing gene families after missing gene recovery");
+        // Phase 4.5: Re-collapse families after missing gene recovery (Panaroo step 6)
+        // Reuses distance cache to avoid recomputing known distances
+        tracing::info!("Phase 4.5: Re-collapsing gene families after missing gene recovery");
         let sequences_after_recovery: std::collections::HashMap<String, Vec<u8>> = graph
             .nodes
             .iter()
@@ -952,7 +981,7 @@ impl PanminerPipeline {
             total_recollapsed
         );
 
-        // Phase 4.7: Misassembly edge cleaning
+        // Phase 4.6: Misassembly edge cleaning (Panaroo step 7)
         let cleaner = MisassemblyEdgeCleaner::from_mode(&self.config.mode, num_genomes);
         let cleaning_stats = cleaner.clean(graph)?;
         tracing::info!("Misassembly edge cleaning: removed {} edges", cleaning_stats.edges_removed);
@@ -967,7 +996,7 @@ impl PanminerPipeline {
     ///
     /// For each edge in the graph, checks if any genome is missing
     /// one of the connected genes. If so, searches the contig sequences
-    /// for a match using k-mer based search.
+    /// for a match using semi-global alignment.
     fn run_missing_gene_recovery(&self, graph: &ConcurrentGraph) -> Result<()> {
         // Extract cluster sequences from graph nodes
         let cluster_sequences: HashMap<String, Vec<u8>> = graph
@@ -985,14 +1014,34 @@ impl PanminerPipeline {
             return Ok(());
         }
 
-        // Extract contig sequences from graph nodes
-        let mut contig_sequences: HashMap<String, Vec<u8>> = HashMap::new();
+        // Extract contig sequences organized by genome.
+        // Each node stores contig_sequences as HashMap<contig_name, Sequence>.
+        // We need to map these to the genomes that have this node so that
+        // when searching for a missing gene in a specific genome, we search
+        // the correct contigs.
+        let mut genome_contig_sequences: HashMap<GenomeId, Vec<Vec<u8>>> = HashMap::new();
         for entry in graph.nodes.iter() {
             let node = entry.value();
-            for (contig_name, seq) in &node.contig_sequences {
-                contig_sequences.insert(format!("{}_{}", entry.key().as_str(), contig_name), seq.clone());
+            for genome_id in &node.genomes {
+                for (_contig_name, seq) in &node.contig_sequences {
+                    genome_contig_sequences
+                        .entry(genome_id.clone())
+                        .or_default()
+                        .push(seq.clone());
+                }
             }
         }
+
+        // Also build a flat map for the recoverer (it just needs contig sequences to search)
+        // Key by genome so we only search relevant contigs
+        let contig_sequences: HashMap<String, Vec<u8>> = genome_contig_sequences
+            .iter()
+            .flat_map(|(genome_id, seqs)| {
+                seqs.iter().enumerate().map(move |(i, seq)| {
+                    (format!("{}_contig{}", genome_id.as_str(), i), seq.clone())
+                })
+            })
+            .collect();
 
         if contig_sequences.is_empty() {
             tracing::info!("Missing gene recovery: no contig sequences available");
@@ -1000,14 +1049,13 @@ impl PanminerPipeline {
         }
 
         tracing::info!(
-            "Missing gene recovery: {} cluster sequences, {} contig sequences",
+            "Missing gene recovery: {} cluster sequences, {} contig sequences from {} genomes",
             cluster_sequences.len(),
-            contig_sequences.len()
+            contig_sequences.len(),
+            genome_contig_sequences.len()
         );
 
         // Perform missing gene recovery
-        // Enable consensus removal in strict mode: nodes where refound hits
-        // exceed original support are deleted (matches Panaroo's --remove_by_consensus)
         let remove_by_consensus = matches!(self.config.mode, CorrectionMode::Strict);
         let recoverer = MissingGeneRecoverer::new()
             .with_min_identity(0.70)

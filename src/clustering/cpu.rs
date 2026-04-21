@@ -2,6 +2,7 @@
 
 use crate::error::Result;
 use crate::graph::{Gene, GeneCluster};
+use rayon::prelude::*;
 use super::traits::Clusterer;
 
 /// CPU-based gene clusterer using greedy incremental clustering.
@@ -44,6 +45,7 @@ impl CpuClusterer {
     /// For each gene, compare against existing cluster centroids.
     /// If identity >= threshold, add to cluster. Otherwise, start new cluster.
     /// Gene pairs with relative length difference > (1 - len_dif_percent) are skipped.
+    /// Uses Rayon parallel iterator for the centroid comparison when available.
     fn greedy_cluster(
         &self,
         genes: &[Gene],
@@ -58,9 +60,9 @@ impl CpuClusterer {
                 continue;
             }
 
-            // Find best matching centroid
-            let best_match = centroids
-                .iter()
+            // Find best matching centroid using parallel iterator
+            let best_match: Option<(usize, f32)> = centroids
+                .par_iter()
                 .enumerate()
                 .filter_map(|(i, centroid)| {
                     // Length filter: skip if relative length difference exceeds (1 - len_dif_percent)

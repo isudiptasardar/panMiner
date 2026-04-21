@@ -1,7 +1,9 @@
 //! Core/accessory alignment output (FASTA format) with MSA integration.
 //!
-//! Uses MSA runners (MAFFT, Clustal Omega, PRANK) for real sequence alignment
-//! instead of placeholder output.
+//! Aligns each gene cluster separately (one MSA per cluster), then
+//! concatenates the per-gene alignments into core and accessory files.
+//! This matches Panaroo's approach where each gene family is aligned
+//! independently, producing meaningful alignments for phylogenetics.
 
 use std::io::Write;
 use std::path::Path;
@@ -29,45 +31,79 @@ impl AlignmentWriter {
         Self { runner }
     }
 
+    /// Compute the core threshold (99% of genomes, at least 1).
+    fn core_threshold(total_genomes: usize) -> usize {
+        if total_genomes == 0 {
+            return 1;
+        }
+        ((total_genomes as f64 * 0.99).ceil() as usize).max(1)
+    }
+
     /// Write core gene alignments to a FASTA file.
     ///
     /// Core genes are those present in >= 99% of genomes.
-    /// Uses MSA to generate proper multiple sequence alignments.
+    /// Each gene cluster is aligned separately (per-gene MSA), then
+    /// all aligned sequences are concatenated into one output file.
     pub fn write_core(&self, graph: &PangenomeGraph, path: &Path) -> Result<()> {
         let mut file = std::fs::File::create(path)?;
 
-        let total_genomes = graph.genomes.len().max(1);
+        let total_genomes = graph.genomes.len();
+        let core_threshold = Self::core_threshold(total_genomes);
 
-        // Find core clusters (present in >= 99% of genomes)
-        let core_threshold = (total_genomes as f32 * 0.99).ceil() as usize;
-
-        // Collect core cluster sequences for MSA
-        let sequences: Vec<(String, Vec<u8>)> = graph
+        // Collect core clusters
+        let core_clusters: Vec<_> = graph
             .nodes
             .iter()
             .filter(|(_, node)| node.support >= core_threshold)
-            .filter_map(|(cluster_id, node)| {
-                node.centroid_sequences.first().cloned()
-                    .map(|seq| (cluster_id.to_string(), seq))
-            })
             .collect();
 
-        if sequences.is_empty() {
-            // If no core sequences, write placeholder
+        if core_clusters.is_empty() {
             writeln!(file, "# No core genes found")?;
             return Ok(());
         }
 
-        // Run MSA on core sequences
-        let result = self.runner.run_msa(&sequences, AlignmentTool::Mafft)?;
+        // Align each core cluster separately
+        let mut total_aligned = 0usize;
+        let mut total_failed = 0usize;
 
-        // Write the aligned sequences
-        file.write_all(result.aligned_fasta.as_bytes())?;
+        for (cluster_id, node) in &core_clusters {
+            // Collect per-genome sequences for this cluster
+            let sequences = Self::cluster_sequences(node, graph);
 
-        // Write metadata header
-        writeln!(file, "# Aligned with {} ({})", result.tool.name(), result.tool.executable())?;
-        writeln!(file, "# Sequences: {}, Alignment length: {}", result.num_sequences, result.alignment_length)?;
+            if sequences.len() < 2 {
+                // Single sequence: write unaligned
+                if let Some((name, seq)) = sequences.first() {
+                    writeln!(file, ">{}", name)?;
+                    let seq_str = String::from_utf8_lossy(seq);
+                    for chunk in seq_str.as_bytes().chunks(80) {
+                        writeln!(file, "{}", String::from_utf8_lossy(chunk))?;
+                    }
+                }
+                continue;
+            }
+
+            match self.runner.run_msa(&sequences, AlignmentTool::Mafft) {
+                Ok(result) => {
+                    file.write_all(result.aligned_fasta.as_bytes())?;
+                    total_aligned += 1;
+                }
+                Err(e) => {
+                    tracing::warn!("MSA failed for cluster {}: {}. Writing unaligned.", cluster_id, e);
+                    // Fallback: write unaligned sequences
+                    for (name, seq) in &sequences {
+                        writeln!(file, ">{}", name)?;
+                        let seq_str = String::from_utf8_lossy(seq);
+                        for chunk in seq_str.as_bytes().chunks(80) {
+                            writeln!(file, "{}", String::from_utf8_lossy(chunk))?;
+                        }
+                    }
+                    total_failed += 1;
+                }
+            }
+        }
+
         writeln!(file, "# Core genes (>=99% presence), Total genomes: {}", total_genomes)?;
+        writeln!(file, "# Aligned clusters: {}, Failed: {}", total_aligned, total_failed)?;
 
         Ok(())
     }
@@ -75,42 +111,114 @@ impl AlignmentWriter {
     /// Write accessory gene alignments to a FASTA file.
     ///
     /// Accessory genes are those present in some but not all genomes.
-    /// Uses MSA to generate proper multiple sequence alignments.
+    /// Each gene cluster is aligned separately.
     pub fn write_accessory(&self, graph: &PangenomeGraph, path: &Path) -> Result<()> {
         let mut file = std::fs::File::create(path)?;
 
-        let total_genomes = graph.genomes.len().max(1);
-        let core_threshold = (total_genomes as f32 * 0.99).ceil() as usize;
+        let total_genomes = graph.genomes.len();
+        let core_threshold = Self::core_threshold(total_genomes);
 
-        // Collect accessory cluster sequences for MSA
-        let sequences: Vec<(String, Vec<u8>)> = graph
+        // Collect accessory clusters
+        let acc_clusters: Vec<_> = graph
             .nodes
             .iter()
             .filter(|(_, node)| node.support > 0 && node.support < core_threshold)
-            .filter_map(|(cluster_id, node)| {
-                node.centroid_sequences.first().cloned()
-                    .map(|seq| (cluster_id.to_string(), seq))
-            })
             .collect();
 
-        if sequences.is_empty() {
-            // If no accessory sequences, write placeholder
+        if acc_clusters.is_empty() {
             writeln!(file, "# No accessory genes found")?;
             return Ok(());
         }
 
-        // Run MSA on accessory sequences
-        let result = self.runner.run_msa(&sequences, AlignmentTool::Mafft)?;
+        let mut total_aligned = 0usize;
+        let mut total_failed = 0usize;
 
-        // Write the aligned sequences
-        file.write_all(result.aligned_fasta.as_bytes())?;
+        for (cluster_id, node) in &acc_clusters {
+            let sequences = Self::cluster_sequences(node, graph);
 
-        // Write metadata header
-        writeln!(file, "# Aligned with {} ({})", result.tool.name(), result.tool.executable())?;
-        writeln!(file, "# Sequences: {}, Alignment length: {}", result.num_sequences, result.alignment_length)?;
+            if sequences.len() < 2 {
+                if let Some((name, seq)) = sequences.first() {
+                    writeln!(file, ">{}", name)?;
+                    let seq_str = String::from_utf8_lossy(seq);
+                    for chunk in seq_str.as_bytes().chunks(80) {
+                        writeln!(file, "{}", String::from_utf8_lossy(chunk))?;
+                    }
+                }
+                continue;
+            }
+
+            match self.runner.run_msa(&sequences, AlignmentTool::Mafft) {
+                Ok(result) => {
+                    file.write_all(result.aligned_fasta.as_bytes())?;
+                    total_aligned += 1;
+                }
+                Err(e) => {
+                    tracing::warn!("MSA failed for accessory cluster {}: {}. Writing unaligned.", cluster_id, e);
+                    for (name, seq) in &sequences {
+                        writeln!(file, ">{}", name)?;
+                        let seq_str = String::from_utf8_lossy(seq);
+                        for chunk in seq_str.as_bytes().chunks(80) {
+                            writeln!(file, "{}", String::from_utf8_lossy(chunk))?;
+                        }
+                    }
+                    total_failed += 1;
+                }
+            }
+        }
+
         writeln!(file, "# Accessory genes (<99% presence), Total genomes: {}", total_genomes)?;
+        writeln!(file, "# Aligned clusters: {}, Failed: {}", total_aligned, total_failed)?;
 
         Ok(())
+    }
+
+    /// Collect per-genome sequences for a cluster node.
+    ///
+    /// Each genome that has this cluster contributes one sequence.
+    /// Falls back to centroid sequence for all genomes if per-genome
+    /// sequences are not available.
+    fn cluster_sequences(node: &crate::graph::Node, graph: &PangenomeGraph) -> Vec<(String, Vec<u8>)> {
+        let mut sequences = Vec::new();
+        let mut seen_seqs: std::collections::HashSet<Vec<u8>> = std::collections::HashSet::new();
+
+        for genome_id in &node.genomes {
+            // Try to get per-genome gene sequence from gene_lookup
+            let seq = if let Some(gene_ids) = node.gene_members.get(genome_id) {
+                if let Some(gene_id_str) = gene_ids.first() {
+                    if let Some(gene) = graph.gene_lookup.get(&crate::graph::GeneId::new(gene_id_str.as_str())) {
+                        if !gene.sequence.is_empty() {
+                            gene.sequence.clone()
+                        } else {
+                            continue;
+                        }
+                    } else {
+                        continue;
+                    }
+                } else {
+                    continue;
+                }
+            } else {
+                // Fallback: use centroid sequence
+                node.centroid_sequences.first().cloned().unwrap_or_default()
+            };
+
+            if seen_seqs.contains(&seq) {
+                // Skip duplicate sequences — MSA on identical input is pointless
+                continue;
+            }
+            seen_seqs.insert(seq.clone());
+
+            sequences.push((format!("{}__{}", node.cluster_id, genome_id), seq));
+        }
+
+        // If no per-genome sequences found, use centroid once
+        if sequences.is_empty() {
+            if let Some(centroid) = node.centroid_sequences.first() {
+                sequences.push((node.cluster_id.to_string(), centroid.clone()));
+            }
+        }
+
+        sequences
     }
 }
 
@@ -127,8 +235,6 @@ mod tests {
 
     #[test]
     fn test_alignment_writer_creation() {
-        // Test that the alignment writer can be created
-        // Note: We don't check is_available() since the MSA tool may not be installed
         let _writer = AlignmentWriter::new();
     }
 
@@ -144,13 +250,10 @@ mod tests {
     }
 
     #[test]
-    fn test_write_core_with_sequences() {
-        let graph = PangenomeGraph::new();
-        let temp = NamedTempFile::new().unwrap();
-        let writer = AlignmentWriter::new();
-
-        // Test with a simple case - write should succeed even without real sequences
-        // (sequences will be empty, so placeholder output)
-        writer.write_core(&graph, temp.path()).unwrap();
+    fn test_core_threshold() {
+        assert_eq!(AlignmentWriter::core_threshold(0), 1);
+        assert_eq!(AlignmentWriter::core_threshold(100), 99);
+        assert_eq!(AlignmentWriter::core_threshold(1), 1);
+        assert_eq!(AlignmentWriter::core_threshold(200), 198);
     }
 }

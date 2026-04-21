@@ -61,6 +61,8 @@ impl GrapeTreeExportRunner {
             if line == "node [" {
                 in_node = true;
                 current_node = None;
+            } else if line == "]" && in_genomes {
+                in_genomes = false;
             } else if line == "]" && in_node {
                 if let Some(node) = current_node.take() {
                     graph.nodes.insert(node.cluster_id.clone(), node);
@@ -87,8 +89,6 @@ impl GrapeTreeExportRunner {
                     }
                 } else if line.starts_with("genomes [") {
                     in_genomes = true;
-                } else if line == "]" && in_genomes {
-                    in_genomes = false;
                 } else if in_genomes && line.starts_with('"') {
                     // Genome ID in quotes
                     let genome_id = line.trim_matches('"').to_string();
@@ -102,7 +102,11 @@ impl GrapeTreeExportRunner {
                         }
                     }
                 } else if line.starts_with("is_highly_variable") {
-                    // Parse but not stored in Node (for future use)
+                    if let Some(node) = &mut current_node {
+                        if let Some(v) = line.split_whitespace().nth(1) {
+                            node.is_highly_variable = v == "1";
+                        }
+                    }
                 }
             }
         }
@@ -450,14 +454,19 @@ mod tests {
     label "c1"
     support 3
     is_paralog 0
-    genomes ["genome1" "genome2"]
+    genomes [
+      "genome1"
+      "genome2"
+    ]
   ]
   node [
     id "c2"
     label "c2"
     support 2
     is_paralog 0
-    genomes ["genome2"]
+    genomes [
+      "genome2"
+    ]
   ]
   edge [
     source "c1"

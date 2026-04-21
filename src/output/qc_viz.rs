@@ -8,6 +8,15 @@ use crate::io::{GenomeQC, MdsProjection};
 use std::path::Path;
 use std::io::Write;
 
+/// Escape special HTML characters to prevent XSS injection.
+fn html_escape(s: &str) -> String {
+    s.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
+        .replace('\'', "&#x27;")
+}
+
 /// Write a pre-QC HTML report with MDS scatter plot and contamination bar chart.
 pub fn write_qc_html_report(
     qc_results: &[GenomeQC],
@@ -100,7 +109,7 @@ pub fn write_qc_html_report(
         let status = if qc.passed { "PASS" } else { "FAIL" };
         let status_class = if qc.passed { "pass" } else { "fail" };
         writeln!(writer, "        <tr>")?;
-        writeln!(writer, "          <td>{}</td>", qc.genome_id)?;
+        writeln!(writer, "          <td>{}</td>", html_escape(&qc.genome_id))?;
         writeln!(writer, "          <td>{:.1}%</td>", qc.completeness)?;
         writeln!(writer, "          <td>{:.1}%</td>", qc.contamination)?;
         writeln!(writer, "          <td class='{}'>{}</td>", status_class, status)?;
@@ -114,6 +123,7 @@ pub fn write_qc_html_report(
 
     // D3.js charts
     writeln!(writer, "  <script>")?;
+    writeln!(writer, "    function escapeHtml(s) {{ return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/\"/g,'&quot;').replace(/'/g,'&#x27;'); }}")?;
     writeln!(writer, "    const tooltip = document.getElementById('tooltip');")?;
 
     // Completeness bar chart
@@ -128,7 +138,7 @@ pub fn write_qc_html_report(
     writeln!(writer, "      .attr('class', d => d.passed ? 'bar-pass' : 'bar-fail').attr('x', (_,i) => xComp(i))")?;
     writeln!(writer, "      .attr('y', d => yComp(d.completeness)).attr('width', xComp.bandwidth())")?;
     writeln!(writer, "      .attr('height', d => h - 20 - yComp(d.completeness))")?;
-    writeln!(writer, "      .on('mouseover', (event, d) => {{ tooltip.style.display='block'; tooltip.innerHTML='<h4>'+d.genome_id+'</h4><div class=meta>Completeness: '+d.completeness.toFixed(1)+'%</div>'; tooltip.style.left=(event.pageX+10)+'px'; tooltip.style.top=(event.pageY-10)+'px'; }})")?;
+    writeln!(writer, "      .on('mouseover', (event, d) => {{ tooltip.style.display='block'; tooltip.innerHTML='<h4>'+escapeHtml(d.genome_id)+'</h4><div class=meta>Completeness: '+d.completeness.toFixed(1)+'%</div>'; tooltip.style.left=(event.pageX+10)+'px'; tooltip.style.top=(event.pageY-10)+'px'; }})")?;
     writeln!(writer, "      .on('mouseout', () => {{ tooltip.style.display='none'; }});")?;
     writeln!(writer, "    compSvg.append('text').attr('class', 'axis-label').attr('x', w/2).attr('y', h-2).attr('text-anchor', 'middle').text('Genome');")?;
     writeln!(writer, "    compSvg.append('text').attr('class', 'axis-label').attr('transform', 'rotate(-90)').attr('x', -h/2).attr('y', 15).attr('text-anchor', 'middle').text('Completeness (%)');")?;
@@ -137,13 +147,13 @@ pub fn write_qc_html_report(
     writeln!(writer, "    const contChart = document.getElementById('cont-chart');")?;
     writeln!(writer, "    const contSvg = d3.select(contChart).append('svg').attr('width', w).attr('height', h);")?;
     writeln!(writer, "    const xCont = d3.scaleBand().domain(qcData.map((_,i) => i)).range([50, w-10]).padding(0.2);")?;
-    writeln!(writer, "    const maxCont = Math.min(50, d3.max(qcData, d => d.contamination) * 1.1);")?;
+    writeln!(writer, "    const maxCont = Math.min(50, (d3.max(qcData, d => d.contamination) || 0) * 1.1 || 1);")?;
     writeln!(writer, "    const yCont = d3.scaleLinear().domain([0, maxCont]).range([h-20, 10]);")?;
     writeln!(writer, "    contSvg.selectAll('.bar').data(qcData).enter().append('rect')")?;
     writeln!(writer, "      .attr('class', d => d.passed ? 'bar-pass' : 'bar-fail').attr('x', (_,i) => xCont(i))")?;
     writeln!(writer, "      .attr('y', d => yCont(d.contamination)).attr('width', xCont.bandwidth())")?;
     writeln!(writer, "      .attr('height', d => h - 20 - yCont(d.contamination))")?;
-    writeln!(writer, "      .on('mouseover', (event, d) => {{ tooltip.style.display='block'; tooltip.innerHTML='<h4>'+d.genome_id+'</h4><div class=meta>Contamination: '+d.contamination.toFixed(1)+'%</div>'; tooltip.style.left=(event.pageX+10)+'px'; tooltip.style.top=(event.pageY-10)+'px'; }})")?;
+    writeln!(writer, "      .on('mouseover', (event, d) => {{ tooltip.style.display='block'; tooltip.innerHTML='<h4>'+escapeHtml(d.genome_id)+'</h4><div class=meta>Contamination: '+d.contamination.toFixed(1)+'%</div>'; tooltip.style.left=(event.pageX+10)+'px'; tooltip.style.top=(event.pageY-10)+'px'; }})")?;
     writeln!(writer, "      .on('mouseout', () => {{ tooltip.style.display='none'; }});")?;
     writeln!(writer, "    contSvg.append('text').attr('class', 'axis-label').attr('x', w/2).attr('y', h-2).attr('text-anchor', 'middle').text('Genome');")?;
     writeln!(writer, "    contSvg.append('text').attr('class', 'axis-label').attr('transform', 'rotate(-90)').attr('x', -h/2).attr('y', 15).attr('text-anchor', 'middle').text('Contamination (%)');")?;
@@ -162,7 +172,7 @@ pub fn write_qc_html_report(
         writeln!(writer, "    const yMds = d3.scaleLinear().domain(d3.extent(mdsCoords, d => d[1])).range([mdsH-20, 10]);")?;
         writeln!(writer, "    mdsSvg.selectAll('.point').data(mdsCoords).enter().append('circle')")?;
         writeln!(writer, "      .attr('class', 'point').attr('cx', d => xMds(d[0])).attr('cy', d => yMds(d[1])).attr('r', 7)")?;
-        writeln!(writer, "      .on('mouseover', (event, d) => {{ const i = mdsCoords.indexOf(d); tooltip.style.display='block'; tooltip.innerHTML='<h4>'+mdsLabels[i]+'</h4>'; tooltip.style.left=(event.pageX+10)+'px'; tooltip.style.top=(event.pageY-10)+'px'; }})")?;
+        writeln!(writer, "      .on('mouseover', (event, d) => {{ const i = mdsCoords.indexOf(d); tooltip.style.display='block'; tooltip.innerHTML='<h4>'+escapeHtml(mdsLabels[i])+'</h4>'; tooltip.style.left=(event.pageX+10)+'px'; tooltip.style.top=(event.pageY-10)+'px'; }})")?;
         writeln!(writer, "      .on('mouseout', () => {{ tooltip.style.display='none'; }});")?;
         writeln!(writer, "    mdsSvg.append('text').attr('class', 'axis-label').attr('x', mdsW/2).attr('y', mdsH-2).attr('text-anchor', 'middle').text('MDS Dimension 1');")?;
         writeln!(writer, "    mdsSvg.append('text').attr('class', 'axis-label').attr('transform', 'rotate(-90)').attr('x', -mdsH/2).attr('y', 15).attr('text-anchor', 'middle').text('MDS Dimension 2');")?;

@@ -49,7 +49,7 @@ impl AccumulationCurveRunner {
             return (1..=n).collect();
         }
         // Evenly spaced integer points from 1 to n
-        let step = (n - 1) as f64 / (self.rarefaction_points - 1) as f64;
+        let step = (n - 1) as f64 / (self.rarefaction_points - 1).max(1) as f64;
         (0..self.rarefaction_points)
             .map(|i| {
                 let k = 1.0 + i as f64 * step;
@@ -242,8 +242,9 @@ impl AccumulationCurveRunner {
         let mut reader = csv::Reader::from_path(csv_path)?;
         let headers = reader.headers()?.clone();
 
-        // First column is "Gene", rest are genome names
-        let genome_names: Vec<String> = headers.iter().skip(1).map(|s| s.to_string()).collect();
+        // Roary CSV has 14 metadata columns, then per-genome columns
+        const METADATA_COLS: usize = 14;
+        let genome_names: Vec<String> = headers.iter().skip(METADATA_COLS).map(|s| s.to_string()).collect();
         let num_genomes = genome_names.len();
 
         // Collect all records first to know cluster count
@@ -260,9 +261,9 @@ impl AccumulationCurveRunner {
         matrix.set_cluster_ids(cluster_ids);
 
         for (cluster_idx, record) in records.iter().enumerate() {
-            for (genome_idx, val) in record.iter().enumerate().skip(1) {
-                let present = val == "1" || val.eq_ignore_ascii_case("TRUE");
-                matrix.set(genome_idx - 1, cluster_idx, present);
+            for (genome_idx, val) in record.iter().enumerate().skip(METADATA_COLS) {
+                let present = val != "" && val != "0" && !val.eq_ignore_ascii_case("FALSE");
+                matrix.set(genome_idx - METADATA_COLS, cluster_idx, present);
             }
         }
 

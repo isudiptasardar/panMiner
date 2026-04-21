@@ -335,6 +335,7 @@ fn load_gml_graph(path: &Path) -> Result<PangenomeGraph> {
     let mut current_edge: Option<Edge> = None;
     let mut in_node = false;
     let mut in_edge = false;
+    let mut in_genomes = false;
 
     for line in content.lines() {
         let line = line.trim();
@@ -342,6 +343,8 @@ fn load_gml_graph(path: &Path) -> Result<PangenomeGraph> {
         if line == "node [" {
             in_node = true;
             current_node = None;
+        } else if line == "]" && in_genomes {
+            in_genomes = false;
         } else if line == "]" && in_node {
             if let Some(node) = current_node.take() {
                 graph.nodes.insert(node.cluster_id.clone(), node);
@@ -355,8 +358,22 @@ fn load_gml_graph(path: &Path) -> Result<PangenomeGraph> {
                 graph.edges.insert(key, edge);
             }
             in_edge = false;
+        } else if in_genomes && line.starts_with('"') {
+            let genome_id = line.trim_matches('"').to_string();
+            let gid = GenomeId::new(genome_id);
+            if in_node {
+                if let Some(node) = &mut current_node {
+                    node.genomes.insert(gid);
+                }
+            } else if in_edge {
+                if let Some(edge) = &mut current_edge {
+                    edge.genomes.insert(gid);
+                }
+            }
         } else if in_node {
-            if let Some(node) = &mut current_node {
+            if line.starts_with("genomes [") {
+                in_genomes = true;
+            } else if let Some(node) = &mut current_node {
                 parse_node_attribute(node, line);
             } else {
                 // Start a default node; the label/id line will set cluster_id
@@ -371,6 +388,19 @@ fn load_gml_graph(path: &Path) -> Result<PangenomeGraph> {
                 }
             }
         } else if in_edge {
+            if line.starts_with("genomes [") {
+                in_genomes = true;
+            } else if let Some(edge) = &mut current_edge {
+                parse_edge_attribute(edge, line);
+            } else {
+                current_edge = Some(Edge::new(
+                    ClusterId::new("unknown"),
+                    ClusterId::new("unknown"),
+                ));
+                if let Some(ref mut edge) = current_edge {
+                    parse_edge_attribute(edge, line);
+                }
+            }
             if current_edge.is_none() {
                 current_edge = Some(Edge::new(
                     ClusterId::new("unknown"),
@@ -415,15 +445,9 @@ fn parse_node_attribute(node: &mut Node, line: &str) {
                 .map(|s| s.as_bytes().to_vec())
                 .collect();
         }
-    } else if line.starts_with("genome_ids ") {
-        if let Some(ids_str) = extract_gml_string(line) {
-            for gid in ids_str.split(',') {
-                let trimmed = gid.trim();
-                if !trimmed.is_empty() {
-                    node.genomes.insert(GenomeId::new(trimmed));
-                }
-            }
-        }
+    } else if line.starts_with("genomes [") {
+        // Handled by in_genomes state in load_gml_graph; just set the flag
+        // The actual genome IDs are parsed in the main loop's in_genomes branch
     } else if line.starts_with("member ") {
         if let Some(members_str) = extract_gml_string(line) {
             // Semicolon-separated gene member IDs. GML format does not
@@ -473,15 +497,9 @@ fn parse_edge_attribute(edge: &mut Edge, line: &str) {
         if let Some(s) = line.split_whitespace().nth(1) {
             edge.support = s.parse().unwrap_or(1);
         }
-    } else if line.starts_with("genome_ids ") {
-        if let Some(ids_str) = extract_gml_string(line) {
-            for gid in ids_str.split(',') {
-                let trimmed = gid.trim();
-                if !trimmed.is_empty() {
-                    edge.genomes.insert(GenomeId::new(trimmed));
-                }
-            }
-        }
+    } else if line.starts_with("genomes [") {
+        // Handled by in_genomes state in load_gml_graph; just set the flag
+        // The actual genome IDs are parsed in the main loop's in_genomes branch
     }
 }
 

@@ -54,6 +54,8 @@ impl ItolAnnotationRunner {
             if line == "node [" {
                 in_node = true;
                 current_node = None;
+            } else if line == "]" && in_genomes {
+                in_genomes = false;
             } else if line == "]" && in_node {
                 if let Some(node) = current_node.take() {
                     graph.nodes.insert(node.cluster_id.clone(), node);
@@ -76,8 +78,6 @@ impl ItolAnnotationRunner {
                     }
                 } else if line.starts_with("genomes [") {
                     in_genomes = true;
-                } else if line == "]" && in_genomes {
-                    in_genomes = false;
                 } else if in_genomes && line.starts_with('"') {
                     let genome_id = line.trim_matches('"').to_string();
                     if let Some(node) = &mut current_node {
@@ -90,7 +90,11 @@ impl ItolAnnotationRunner {
                         }
                     }
                 } else if line.starts_with("is_highly_variable") {
-                    // Parse but not stored in Node (for future use)
+                    if let Some(node) = &mut current_node {
+                        if let Some(v) = line.split_whitespace().nth(1) {
+                            node.is_highly_variable = v == "1";
+                        }
+                    }
                 }
             }
         }
@@ -98,25 +102,50 @@ impl ItolAnnotationRunner {
         Ok(graph)
     }
 
-    /// Parse gene_data.csv to extract genome metadata.
+    /// Parse gene_presence_absence.csv (Roary format) to extract per-genome metadata.
+    ///
+    /// Returns a HashMap mapping genome name to gene count string.
+    /// Skips the 14 metadata columns in the Roary CSV header.
     #[allow(dead_code)]
     fn parse_gene_data_csv(csv_path: &Path) -> Result<HashMap<String, String>> {
+        // Expects path to gene_presence_absence.csv (Roary format: 14 metadata cols + genome cols)
         let content = fs::read_to_string(csv_path)?;
         let mut metadata: HashMap<String, String> = HashMap::new();
 
-        for line in content.lines() {
-            let line = line.trim();
-            if line.is_empty() {
-                continue;
+        let mut lines = content.lines();
+        if let Some(header) = lines.next() {
+            let headers: Vec<&str> = header.split(',').collect();
+            const METADATA_COLS: usize = 14;
+            if headers.len() <= METADATA_COLS {
+                return Ok(metadata); // No genome columns
             }
-            // Try to extract genome source from the CSV
-            // Format: cluster_id,annotation,product,contig,start,end,strand,...
-            let parts: Vec<&str> = line.split(',').collect();
-            if parts.len() >= 4 {
-                let genome = parts.get(3).unwrap_or(&"").trim().to_string();
-                if !genome.is_empty() && genome != "contig" {
-                    metadata.insert(genome.clone(), parts.get(1).unwrap_or(&"").to_string());
+
+            let genome_names: Vec<&str> = headers[METADATA_COLS..]
+                .iter()
+                .map(|s| s.trim())
+                .collect();
+
+            // Initialize gene counts per genome
+            let mut gene_counts: Vec<usize> = vec![0; genome_names.len()];
+
+            for line in lines {
+                let line = line.trim();
+                if line.is_empty() {
+                    continue;
                 }
+                let fields: Vec<&str> = line.split(',').collect();
+                for (idx, _name) in genome_names.iter().enumerate() {
+                    if let Some(val) = fields.get(METADATA_COLS + idx) {
+                        let val = val.trim();
+                        if !val.is_empty() && val != "0" {
+                            gene_counts[idx] += 1;
+                        }
+                    }
+                }
+            }
+
+            for (name, count) in genome_names.iter().zip(gene_counts.iter()) {
+                metadata.insert(name.to_string(), count.to_string());
             }
         }
 

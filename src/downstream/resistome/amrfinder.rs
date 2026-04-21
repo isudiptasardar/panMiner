@@ -198,7 +198,34 @@ fn parse_amrfinder_tsv(path: &Path) -> Result<Vec<AmrGene>> {
     let mut genes = Vec::new();
     let mut lines = content.lines();
 
-    if let Some(_header) = lines.next() {}
+    let header_line = match lines.next() {
+        Some(h) => h,
+        None => return Ok(genes),
+    };
+    let header_fields: Vec<&str> = header_line.split('\t').collect();
+
+    let col = |names: &[&str]| -> usize {
+        for name in names {
+            if let Some(idx) = header_fields.iter().position(|h| *h == *name) {
+                return idx;
+            }
+        }
+        0
+    };
+
+    let gene_name_idx = col(&["Gene symbol", "gene_symbol", "Protein ID", "gene_name"]);
+    let scope_idx = col(&["Scope", "scope"]);
+    let target_type_idx = col(&["Element type", "element_type", "target_type"]);
+    let method_idx = col(&["Method", "method", "Evidence"]);
+    let identity_idx = col(&["Sequence identity", "seq_identity", "identity", "Identity"]);
+    let coverage_idx = col(&["Coverage", "coverage"]);
+    let contig_idx = col(&["Contig id", "contig_id", "contig"]);
+    let start_idx = col(&["Start", "start", "Gene start", "gene_start"]);
+    let end_idx = col(&["Stop", "stop", "end", "Gene stop", "gene_stop"]);
+    let strand_idx = col(&["Strand", "strand"]);
+    let annotation_idx = col(&["AA Mutation", "aa_mutation", "annotation"]);
+    let product_idx = col(&["Product category", "product_category", "product"]);
+    let resistance_idx = col(&["Drug class", "drug_class", "resistance", "Class"]);
 
     for line in lines {
         let line = line.trim();
@@ -207,24 +234,24 @@ fn parse_amrfinder_tsv(path: &Path) -> Result<Vec<AmrGene>> {
         }
 
         let fields: Vec<&str> = line.split('\t').collect();
-        if fields.len() < 13 {
+        if fields.len() < 3 {
             continue;
         }
 
         genes.push(AmrGene {
-            gene_name: fields[0].to_string(),
-            scope: fields[1].to_string(),
-            target_type: fields[2].to_string(),
-            method: fields[3].to_string(),
-            identity: fields[4].parse().unwrap_or(0.0),
-            coverage: fields[5].parse().unwrap_or(0.0),
-            contig: fields[6].to_string(),
-            start: fields[7].parse().unwrap_or(0),
-            end: fields[8].parse().unwrap_or(0),
-            strand: fields[9].to_string(),
-            annotation: fields[10].to_string(),
-            product: fields[11].to_string(),
-            resistance: fields[12].to_string(),
+            gene_name: fields.get(gene_name_idx).unwrap_or(&"").to_string(),
+            scope: fields.get(scope_idx).unwrap_or(&"").to_string(),
+            target_type: fields.get(target_type_idx).unwrap_or(&"").to_string(),
+            method: fields.get(method_idx).unwrap_or(&"").to_string(),
+            identity: fields.get(identity_idx).unwrap_or(&"0.0").parse().unwrap_or(0.0),
+            coverage: fields.get(coverage_idx).unwrap_or(&"0.0").parse().unwrap_or(0.0),
+            contig: fields.get(contig_idx).unwrap_or(&"").to_string(),
+            start: fields.get(start_idx).unwrap_or(&"0").parse().unwrap_or(0),
+            end: fields.get(end_idx).unwrap_or(&"0").parse().unwrap_or(0),
+            strand: fields.get(strand_idx).unwrap_or(&"").to_string(),
+            annotation: fields.get(annotation_idx).unwrap_or(&"").to_string(),
+            product: fields.get(product_idx).unwrap_or(&"").to_string(),
+            resistance: fields.get(resistance_idx).unwrap_or(&"").to_string(),
         });
     }
     Ok(genes)
@@ -312,7 +339,7 @@ fn convert_csv_to_gff(csv_path: &Path, gff_path: &Path) -> Result<()> {
             continue;
         }
         let fields: Vec<&str> = line.split(',').collect();
-        if fields.len() < 6 {
+        if fields.len() < 7 {
             continue;
         }
         let cluster_id = fields.get(0).unwrap_or(&"");

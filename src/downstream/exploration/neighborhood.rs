@@ -192,20 +192,6 @@ impl DownstreamResult for NeighborhoodResult {
     }
 }
 
-impl DownstreamResult for GeneNeighborhoodExtractor {
-    fn write_to(&self, _dir: &Path) -> Result<()> {
-        // No-op: use run() to get NeighborhoodResult
-        Ok(())
-    }
-
-    fn summary(&self) -> String {
-        format!(
-            "GeneNeighborhoodExtractor: seed={}, max_depth={}",
-            self.seed_gene, self.max_depth
-        )
-    }
-}
-
 /// Parse GML file into a PangenomeGraph.
 ///
 /// This follows the simple line-by-line pattern from `src/graph/merge.rs`.
@@ -217,6 +203,7 @@ fn parse_gml_graph(path: &Path) -> Result<PangenomeGraph> {
     let mut current_edge: Option<Edge> = None;
     let mut in_node = false;
     let mut in_edge = false;
+    let mut in_genomes = false;
 
     for line in content.lines() {
         let line = line.trim();
@@ -224,6 +211,8 @@ fn parse_gml_graph(path: &Path) -> Result<PangenomeGraph> {
         if line == "node [" {
             in_node = true;
             current_node = None;
+        } else if line == "]" && in_genomes {
+            in_genomes = false;
         } else if line == "]" && in_node {
             if let Some(node) = current_node.take() {
                 graph.nodes.insert(node.cluster_id.clone(), node);
@@ -238,6 +227,18 @@ fn parse_gml_graph(path: &Path) -> Result<PangenomeGraph> {
                 graph.edges.insert(key, edge);
             }
             in_edge = false;
+        } else if in_genomes && line.starts_with('"') {
+            let genome_id = line.trim_matches('"').to_string();
+            let gid = crate::graph::GenomeId::new(genome_id);
+            if in_node {
+                if let Some(node) = &mut current_node {
+                    node.genomes.insert(gid);
+                }
+            } else if in_edge {
+                if let Some(edge) = &mut current_edge {
+                    edge.genomes.insert(gid);
+                }
+            }
         } else if in_node {
             if current_node.is_none() {
                 current_node = Some(Node::from_cluster(&{
@@ -266,17 +267,8 @@ fn parse_gml_graph(path: &Path) -> Result<PangenomeGraph> {
                     if let Some(ann) = line.split('"').nth(1) {
                         node.annotations.insert(ann.to_string());
                     }
-                } else if line.starts_with("genomes") {
-                    // genomes are listed after the node, parse them
-                    // Format: genomes number_value or genomes [ ... ]
-                    if let Some(s) = line.split_whitespace().nth(1) {
-                        let count: usize = s.parse().unwrap_or(0);
-                        // Add placeholder genomes based on support
-                        for i in 0..count {
-                            node.genomes
-                                .insert(crate::graph::GenomeId::new(format!("genome_{}", i)));
-                        }
-                    }
+                } else if line.starts_with("genomes [") {
+                    in_genomes = true;
                 }
             }
         } else if in_edge {
@@ -295,19 +287,12 @@ fn parse_gml_graph(path: &Path) -> Result<PangenomeGraph> {
                     if let Some(s) = line.split('"').nth(1) {
                         edge.to = ClusterId::new(s);
                     }
-                } else if line.starts_with("value") {
+                } else if line.starts_with("support") {
                     if let Some(s) = line.split_whitespace().nth(1) {
                         edge.support = s.parse().unwrap_or(1);
                     }
-                } else if line.starts_with("genomes") {
-                    if let Some(s) = line.split_whitespace().nth(1) {
-                        let count: usize = s.parse().unwrap_or(0);
-                        for i in 0..count {
-                            edge.genomes
-                                .insert(crate::graph::GenomeId::new(format!("genome_{}", i)));
-                        }
-                        edge.support = edge.genomes.len();
-                    }
+                } else if line.starts_with("genomes [") {
+                    in_genomes = true;
                 }
             }
         }

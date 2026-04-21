@@ -73,8 +73,8 @@ impl SkaniRunner {
     /// Compute an all-pairs ANI matrix using `skani triangle`.
     ///
     /// Returns a symmetric matrix where result[i][j] is the ANI between
-    /// genome i and genome j (0.0-1.0). Pairs where skani could not
-    /// compute ANI (e.g., too divergent) are set to 0.0.
+    /// genome i and genome j (0.0-1.0). Diagonal is 1.0. Pairs where
+    /// skani could not compute ANI (e.g., too divergent) remain 0.0.
     pub fn compute_ani_matrix(&self, genomes: &[PathBuf]) -> Result<Vec<Vec<f64>>> {
         let n = genomes.len();
         if n == 0 {
@@ -83,6 +83,12 @@ impl SkaniRunner {
         if n == 1 {
             return Ok(vec![vec![1.0]]);
         }
+
+        // Build genome name list for index lookup
+        let genome_names: Vec<String> = genomes
+            .iter()
+            .filter_map(|p| p.file_stem().map(|s| s.to_string_lossy().to_string()))
+            .collect();
 
         // Build genome list file for skani triangle
         let temp_dir = tempfile::tempdir()?;
@@ -95,7 +101,7 @@ impl SkaniRunner {
             }
         }
 
-        // Run skani triangle with sparse output (-E flag for edge list)
+        // Run skani triangle with sparse output
         let output = Command::new(&self.skani_path)
             .arg("triangle")
             .arg("-l")
@@ -113,7 +119,7 @@ impl SkaniRunner {
         }
 
         let stdout = String::from_utf8_lossy(&output.stdout);
-        parse_skani_triangle_sparse(&stdout, n)
+        parse_skani_triangle_sparse(&stdout, n, &genome_names)
     }
 }
 
@@ -148,11 +154,30 @@ fn parse_skani_ani(output: &str) -> Result<f64> {
 /// Parse sparse edge-list output from `skani triangle --sparse`.
 ///
 /// The sparse format has a header line starting with '#' followed by
-/// tab-delimited rows: `ref_idx\tquery_idx\tANI\tAF_ref\tAF_query`
+/// tab-delimited rows: `ref_file\tquery_file\tANI\tAF_ref\tAF_query`
 ///
-/// We build a symmetric matrix from these pairwise entries.
-fn parse_skani_triangle_sparse(output: &str, n: usize) -> Result<Vec<Vec<f64>>> {
-    let matrix = vec![vec![1.0; n]; n];
+/// We build a symmetric matrix from these pairwise entries by matching
+/// file stems against the provided genome name list. Diagonal is 1.0;
+/// unreported pairs remain 0.0.
+fn parse_skani_triangle_sparse(
+    output: &str,
+    n: usize,
+    genome_names: &[String],
+) -> Result<Vec<Vec<f64>>> {
+    // Build name-to-index lookup
+    let name_to_idx: std::collections::HashMap<&str, usize> = genome_names
+        .iter()
+        .enumerate()
+        .map(|(i, name)| (name.as_str(), i))
+        .collect();
+
+    // Initialize: diagonal = 1.0, off-diagonal = 0.0 (unreported pairs are divergent)
+    let mut matrix = vec![vec![0.0; n]; n];
+    for i in 0..n {
+        matrix[i][i] = 1.0;
+    }
+
+    let mut parsed_pairs = 0usize;
 
     for line in output.lines() {
         if line.starts_with('#') || line.is_empty() {
@@ -160,32 +185,35 @@ fn parse_skani_triangle_sparse(output: &str, n: usize) -> Result<Vec<Vec<f64>>> 
         }
         let parts: Vec<&str> = line.split('\t').collect();
         if parts.len() >= 3 {
-            // skani --sparse output: ref_file query_file ANI AF_ref AF_query
-            // But the file paths are names, not indices. We need to match them.
-            // Actually, skani triangle --sparse outputs:
-            // ref_file<TAB>query_file<TAB>ANI<TAB>AF_ref<TAB>AF_query
-            // We parse ANI and set matrix[i][j] = matrix[j][i] = ANI
-            // Since we don't know the indices from names alone,
-            // we use a simpler approach: parse all pairs and fill by matching names.
-            // For now, we rely on the order matching our input list.
-            // skani outputs pairs in the order they appear.
             if let Ok(ani_pct) = parts[2].trim().parse::<f64>() {
                 let ani = ani_pct / 100.0;
-                // We need indices. Parse the file paths from parts[0] and parts[1]
-                // and match them against our genome list.
-                // Since the sparse output doesn't give indices directly,
-                // we'll rely on the line order or name matching.
-                // For robustness, we parse what we can.
-                // The ANI value is what we need; indices are determined separately.
-                // NOTE: We'll use the full triangle output instead for reliability.
-                let _ = ani; // Will be used in the non-sparse version
+
+                // Match file stems to genome indices
+                let ref_stem = PathBuf::from(parts[0].trim())
+                    .file_stem()
+                    .map(|s| s.to_string_lossy().to_string())
+                    .unwrap_or_else(|| parts[0].trim().to_string());
+                let query_stem = PathBuf::from(parts[1].trim())
+                    .file_stem()
+                    .map(|s| s.to_string_lossy().to_string())
+                    .unwrap_or_else(|| parts[1].trim().to_string());
+
+                if let (Some(&i), Some(&j)) = (name_to_idx.get(ref_stem.as_str()), name_to_idx.get(query_stem.as_str())) {
+                    matrix[i][j] = ani;
+                    matrix[j][i] = ani;
+                    parsed_pairs += 1;
+                }
             }
         }
     }
 
-    // Fallback: use the symmetric matrix assembled from sparse pairwise results.
-    // For reliability on large datasets, prefer compute_ani_matrix which uses
-    // `skani triangle` and parses the full PHYLIP-like output directly.
+    tracing::debug!(
+        "skani sparse: parsed {} pairs out of {} possible for {} genomes",
+        parsed_pairs,
+        n * (n - 1) / 2,
+        n
+    );
+
     Ok(matrix)
 }
 
@@ -216,11 +244,15 @@ fn parse_skani_pairwise_line(line: &str) -> Option<(String, String, f64)> {
 /// or when the sparse output format cannot be reliably parsed.
 /// It calls `skani dist -q genome_i -r genome_j` for each pair.
 fn compute_ani_matrix_pairwise(
-    skani_path: &PathBuf,
+    skani_path: &Path,
     genomes: &[PathBuf],
 ) -> Result<Vec<Vec<f64>>> {
     let n = genomes.len();
-    let mut matrix = vec![vec![1.0; n]; n];
+    // Initialize: diagonal = 1.0, off-diagonal = 0.0 (unreported = divergent)
+    let mut matrix = vec![vec![0.0; n]; n];
+    for i in 0..n {
+        matrix[i][i] = 1.0;
+    }
 
     // Build genome name list for index lookup
     let genome_names: Vec<String> = genomes
@@ -280,7 +312,7 @@ impl SkaniRunner {
             Ok(matrix) => Ok(matrix),
             Err(_) => {
                 tracing::info!("skani triangle failed, falling back to pairwise dist");
-                compute_ani_matrix_pairwise(&self.skani_path, genomes)
+                compute_ani_matrix_pairwise(self.skani_path.as_path(), genomes)
             }
         }
     }

@@ -3,9 +3,19 @@
 //! Provides translation for bacterial gene sequences, including
 //! standard codons, start codon overrides, and stop codon handling.
 
+use std::sync::OnceLock;
+
 /// Start codons that translate to Methionine (M) instead of their
 /// standard amino acid. Table 11 bacterial start codons.
-const START_CODONS: &[&str] = &["ATG", "GTG", "TTG"];
+const START_CODONS: &[[u8; 3]] = &[*b"ATG", *b"GTG", *b"TTG"];
+
+/// Cached codon table (built once on first use).
+static CODON_TABLE: OnceLock<[u8; 64]> = OnceLock::new();
+
+/// Get the codon translation table (cached after first call).
+fn codon_table() -> &'static [u8; 64] {
+    CODON_TABLE.get_or_init(build_codon_table)
+}
 
 /// Translate a DNA sequence to amino acids using the standard genetic code.
 ///
@@ -19,18 +29,18 @@ pub fn translate(dna: &[u8]) -> Vec<u8> {
     }
 
     let mut protein = Vec::with_capacity(dna.len() / 3);
-    let codon_table = build_codon_table();
+    let table = codon_table();
 
     for i in (0..dna.len() - 2).step_by(3) {
         let codon = &dna[i..i + 3];
         let aa = if i == 0 && is_start_codon(codon) {
             b'M'
         } else {
-            lookup_codon(codon, &codon_table)
+            lookup_codon(codon, table)
         };
 
         if aa == b'*' {
-            break; // Stop at first stop codon
+            break;
         }
         protein.push(aa);
     }
@@ -46,14 +56,14 @@ pub fn translate_with_stop(dna: &[u8]) -> Vec<u8> {
     }
 
     let mut protein = Vec::with_capacity(dna.len() / 3);
-    let codon_table = build_codon_table();
+    let table = codon_table();
 
     for i in (0..dna.len() - 2).step_by(3) {
         let codon = &dna[i..i + 3];
         let aa = if i == 0 && is_start_codon(codon) {
             b'M'
         } else {
-            lookup_codon(codon, &codon_table)
+            lookup_codon(codon, table)
         };
         protein.push(aa);
     }
@@ -61,13 +71,16 @@ pub fn translate_with_stop(dna: &[u8]) -> Vec<u8> {
     protein
 }
 
-/// Check if a codon is a start codon.
+/// Check if a codon is a start codon using direct byte comparison (no allocation).
 fn is_start_codon(codon: &[u8]) -> bool {
     if codon.len() != 3 {
         return false;
     }
-    let s = std::str::from_utf8(codon).unwrap_or("");
-    START_CODONS.contains(&s)
+    START_CODONS.iter().any(|sc| {
+        codon[0].to_ascii_uppercase() == sc[0]
+            && codon[1].to_ascii_uppercase() == sc[1]
+            && codon[2].to_ascii_uppercase() == sc[2]
+    })
 }
 
 /// Build a lookup table mapping codon indices to amino acids.
@@ -113,7 +126,7 @@ fn nuc_to_index(n: u8) -> Option<usize> {
         b'C' => Some(1),
         b'A' => Some(2),
         b'G' => Some(3),
-        _ => None, // Ambiguous base
+        _ => None,
     }
 }
 
@@ -121,7 +134,7 @@ fn nuc_to_index(n: u8) -> Option<usize> {
 fn lookup_codon(codon: &[u8], table: &[u8; 64]) -> u8 {
     match codon_to_index(codon) {
         Some(idx) => table[idx],
-        None => b'X', // Ambiguous base in codon
+        None => b'X',
     }
 }
 
@@ -131,7 +144,6 @@ mod tests {
 
     #[test]
     fn test_translate_basic() {
-        // ATG = M, TTT = F, TTC = F, TAA = stop
         let dna = b"ATGTTTTTCTAA";
         let protein = translate(dna);
         assert_eq!(protein, b"MFF");
@@ -139,7 +151,6 @@ mod tests {
 
     #[test]
     fn test_translate_start_codon_gtg() {
-        // GTG is a start codon → M (not V)
         let dna = b"GTGTTTTTCTAA";
         let protein = translate(dna);
         assert_eq!(protein[0], b'M');
@@ -147,7 +158,6 @@ mod tests {
 
     #[test]
     fn test_translate_start_codon_ttg() {
-        // TTG is a start codon → M (not L)
         let dna = b"TTGTTTTTCTAA";
         let protein = translate(dna);
         assert_eq!(protein[0], b'M');
@@ -155,14 +165,13 @@ mod tests {
 
     #[test]
     fn test_translate_stop_early() {
-        let dna = b"ATGTAA"; // M then stop
+        let dna = b"ATGTAA";
         let protein = translate(dna);
         assert_eq!(protein, b"M");
     }
 
     #[test]
     fn test_translate_with_stop() {
-        // ATG TTT TTC TAA = M F F *(stop)
         let dna = b"ATGTTTTTCTAA";
         let protein = translate_with_stop(dna);
         assert_eq!(protein, b"MFF*");
@@ -170,23 +179,21 @@ mod tests {
 
     #[test]
     fn test_translate_short_sequence() {
-        let dna = b"AT"; // Less than 3 bases
+        let dna = b"AT";
         let protein = translate(dna);
         assert!(protein.is_empty());
     }
 
     #[test]
     fn test_translate_ambiguous_base() {
-        let dna = b"ATGNTTTTCTAA"; // N = ambiguous
+        let dna = b"ATGNTTTTCTAA";
         let protein = translate(dna);
         assert_eq!(protein[0], b'M');
-        // ATGN = ambiguous codon → X
         assert_eq!(protein[1], b'X');
     }
 
     #[test]
     fn test_translate_all_stops() {
-        // TAA, TAG, TGA are all stop codons
         let dna1 = b"ATGTTTTTCTAA";
         assert_eq!(translate(dna1), b"MFF");
 
@@ -202,5 +209,12 @@ mod tests {
         let dna = b"atgtttttctaa";
         let protein = translate(dna);
         assert_eq!(protein, b"MFF");
+    }
+
+    #[test]
+    fn test_codon_table_cached() {
+        let t1 = codon_table();
+        let t2 = codon_table();
+        assert!(std::ptr::eq(t1, t2), "codon_table should be cached");
     }
 }

@@ -78,7 +78,6 @@ impl AlignmentRunner for ClustalOmegaRunner {
         }
 
         let output = child.wait_with_output()?;
-        let output = output; // Rename to avoid shadowing
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
@@ -122,34 +121,29 @@ fn parse_fasta(fasta: &str) -> (Vec<(String, Vec<u8>)>, usize) {
     let mut sequences = Vec::new();
     let mut current_name = String::new();
     let mut current_seq = Vec::new();
-    let mut alignment_length: Option<usize> = None;
 
     for line in fasta.lines() {
         if line.starts_with('>') {
-            // Push current sequence if we have one
             if !current_name.is_empty() {
                 sequences.push((current_name, current_seq));
             }
-            // Start new sequence
             current_name = line[1..].to_string();
             current_seq = Vec::new();
         } else {
             let trimmed = line.trim();
             if !trimmed.is_empty() {
                 current_seq.extend_from_slice(trimmed.as_bytes());
-                if alignment_length.is_none() {
-                    alignment_length = Some(trimmed.len());
-                }
             }
         }
     }
 
-    // Don't forget the last sequence
     if !current_name.is_empty() {
         sequences.push((current_name, current_seq));
     }
 
-    (sequences, alignment_length.unwrap_or(0))
+    let alignment_length = sequences.first().map(|(_, seq)| seq.len()).unwrap_or(0);
+
+    (sequences, alignment_length)
 }
 
 #[cfg(test)]

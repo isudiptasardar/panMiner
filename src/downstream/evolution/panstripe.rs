@@ -66,6 +66,9 @@ impl PanstripeRunner {
 
     /// Build the R script for running panstripe analysis.
     fn build_r_script(pa_path: &Path, tree_path: &Path) -> String {
+        // Escape backslashes and double quotes for safe embedding in R string literals
+        let pa_str = pa_path.display().to_string().replace('\\', "\\\\").replace('"', "\\\"");
+        let tree_str = tree_path.display().to_string().replace('\\', "\\\\").replace('"', "\\\"");
         format!(
             r#"
 library(panstripe)
@@ -79,8 +82,8 @@ sink()
 writeLines(as.character(result@convergence), "panstripe_convergence.txt")
 cat("Panstripe analysis complete.\n")
 "#,
-            pa_path.display(),
-            tree_path.display()
+            pa_str,
+            tree_str
         )
     }
 

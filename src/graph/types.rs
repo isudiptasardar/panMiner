@@ -92,7 +92,7 @@ impl std::fmt::Display for Strand {
 }
 
 /// A gene from a genome.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Gene {
     /// Unique gene identifier
     pub id: GeneId,
@@ -414,6 +414,19 @@ impl PangenomeGraph {
     /// Check if the graph is empty.
     pub fn is_empty(&self) -> bool {
         self.nodes.is_empty()
+    }
+
+    /// Build a gene_members map for Roary CSV output.
+    ///
+    /// Returns `HashMap<cluster_id, HashMap<genome_id, Vec<gene_id>>>`
+    /// using String keys for CSV writer compatibility.
+    pub fn build_gene_members_map(&self) -> HashMap<String, HashMap<String, Vec<String>>> {
+        self.nodes.iter().map(|(cid, node)| {
+            let inner: HashMap<String, Vec<String>> = node.gene_members.iter()
+                .map(|(gid, genes)| (gid.as_str().to_string(), genes.clone()))
+                .collect();
+            (cid.as_str().to_string(), inner)
+        }).collect()
     }
 }
 

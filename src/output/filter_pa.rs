@@ -47,10 +47,11 @@ pub fn is_fragment(gene_id: &str) -> bool {
 /// Check if a gene annotation indicates a pseudogene.
 ///
 /// Pseudogenes typically have "pseudo", "pseudogene", or internal stop codons.
+/// "hypothetical protein" is NOT treated as a pseudogene — it indicates an
+/// uncharacterized gene, not a non-functional one.
 pub fn is_pseudogene(annotation: &str, protein: &[u8]) -> bool {
     let annot_lower = annotation.to_lowercase();
     if annot_lower.contains("pseudo")
-        || annot_lower.contains("hypothetical protein")
         || annot_lower.contains("fragment")
     {
         return true;
@@ -96,28 +97,25 @@ pub fn filter_presence_absence(
     filter_types: &[FilterType],
     _length_threshold: f32,
 ) -> Result<()> {
-    let content = std::fs::read_to_string(input_path)?;
-    let lines: Vec<String> = content.lines().map(String::from).collect();
+    let mut rdr = csv::Reader::from_path(input_path)?;
+    let mut wtr = csv::Writer::from_path(output_path)?;
 
-    if lines.is_empty() {
-        return Err(crate::Error::Output("Empty presence/absence file".to_string()));
-    }
+    let headers = rdr.headers()?.clone();
+    wtr.write_record(&headers)?;
 
-    let header = lines[0].clone();
-
-    // Filter rows
-    let mut filtered_rows: Vec<String> = vec![header];
     let mut removed_count = 0;
+    let mut kept_count = 0;
 
-    for row in lines.iter().skip(1) {
-        let fields: Vec<&str> = row.split(',').collect();
-        if fields.len() < 3 {
-            filtered_rows.push(row.clone());
+    for result in rdr.records() {
+        let record = result?;
+        if record.len() < 3 {
+            wtr.write_record(&record)?;
+            kept_count += 1;
             continue;
         }
 
-        let gene_id = fields[0];
-        let annotation = fields[1];
+        let gene_id = record.get(0).unwrap_or("");
+        let annotation = record.get(1).unwrap_or("");
 
         let mut should_filter = false;
 
@@ -147,17 +145,17 @@ pub fn filter_presence_absence(
         if should_filter {
             removed_count += 1;
         } else {
-            filtered_rows.push(row.clone());
+            wtr.write_record(&record)?;
+            kept_count += 1;
         }
     }
 
-    let output = filtered_rows.join("\n");
-    std::fs::write(output_path, output)?;
+    wtr.flush()?;
 
     tracing::info!(
         "Filtered P/A matrix: removed {} genes, {} remaining",
         removed_count,
-        filtered_rows.len() - 1
+        kept_count
     );
 
     Ok(())
@@ -177,7 +175,7 @@ mod tests {
     #[test]
     fn test_is_pseudogene() {
         assert!(is_pseudogene("pseudogene", b""));
-        assert!(is_pseudogene("hypothetical protein", b""));
+        assert!(!is_pseudogene("hypothetical protein", b"")); // Not a pseudogene
         assert!(is_pseudogene("normal annotation", b"MA*MA")); // Internal stop
         assert!(!is_pseudogene("normal annotation", b"MAMAM")); // No internal stop
     }

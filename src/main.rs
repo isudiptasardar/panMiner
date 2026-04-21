@@ -615,10 +615,10 @@ fn main() -> anyhow::Result<()> {
         EnvFilter::new("info")
     };
 
-    tracing_subscriber::fmt()
+    let _ = tracing_subscriber::fmt()
         .with_env_filter(filter)
         .with_target(false)
-        .init();
+        .try_init();
 
     match cli.command {
         Some(Commands::FilterPa { input, output, filter_type, length_threshold }) => {
@@ -628,17 +628,7 @@ fn main() -> anyhow::Result<()> {
             tracing::info!("Filtered output written to: {:?}", output);
             tracing::info!("Done.");
         }
-        Some(Commands::Qc { input, output, qc_mode, distance, mds, verbose }) => {
-            let filter = if verbose {
-                EnvFilter::new("debug")
-            } else {
-                EnvFilter::new("info")
-            };
-            tracing_subscriber::fmt()
-                .with_env_filter(filter)
-                .with_target(false)
-                .init();
-
+        Some(Commands::Qc { input, output, qc_mode, distance, mds, verbose: _ }) => {
             tracing::info!("PanMiner qc v{}", panminer::VERSION);
 
             // Create output directory
@@ -708,17 +698,7 @@ fn main() -> anyhow::Result<()> {
             tracing::info!("QC complete. Results in: {:?}", output);
             tracing::info!("Done.");
         }
-        Some(Commands::Merge { directories, output, identity, threads, verbose }) => {
-            let filter = if verbose {
-                EnvFilter::new("debug")
-            } else {
-                EnvFilter::new("info")
-            };
-            tracing_subscriber::fmt()
-                .with_env_filter(filter)
-                .with_target(false)
-                .init();
-
+        Some(Commands::Merge { directories, output, identity, threads, verbose: _ }) => {
             tracing::info!("PanMiner merge v{}", panminer::VERSION);
             let effective_threads = if threads == 0 {
                 std::thread::available_parallelism().map(|p| p.get()).unwrap_or(1)
@@ -746,17 +726,7 @@ fn main() -> anyhow::Result<()> {
             tracing::info!("Extracted sequences written to: {:?}", output);
             tracing::info!("Done.");
         }
-        Some(Commands::Integrate { graph, input, output, identity, threads, verbose }) => {
-            let filter = if verbose {
-                EnvFilter::new("debug")
-            } else {
-                EnvFilter::new("info")
-            };
-            tracing_subscriber::fmt()
-                .with_env_filter(filter)
-                .with_target(false)
-                .init();
-
+        Some(Commands::Integrate { graph, input, output, identity, threads, verbose: _ }) => {
             tracing::info!("PanMiner integrate v{}", panminer::VERSION);
             let effective_threads = if threads == 0 {
                 std::thread::available_parallelism().map(|p| p.get()).unwrap_or(1)
@@ -779,17 +749,7 @@ fn main() -> anyhow::Result<()> {
             }
             tracing::info!("Done.");
         }
-        Some(Commands::Analyze { input, gwas, gwas_tool, phenotypes, panstripe, tree, amr, amr_database, organism, neighborhood, seed_gene, neighborhood_depth, accumulation, num_samples, export_grapetree, export_itol, abundance, pangrowth, verbose }) => {
-            let filter = if verbose {
-                EnvFilter::new("debug")
-            } else {
-                EnvFilter::new("info")
-            };
-            tracing_subscriber::fmt()
-                .with_env_filter(filter)
-                .with_target(false)
-                .init();
-
+        Some(Commands::Analyze { input, gwas, gwas_tool, phenotypes, panstripe, tree, amr, amr_database, organism, neighborhood, seed_gene, neighborhood_depth, accumulation, num_samples, export_grapetree, export_itol, abundance, pangrowth, verbose: _ }) => {
             tracing::info!("PanMiner analyze v{}", panminer::VERSION);
 
             // Create downstream output directory
@@ -1099,17 +1059,7 @@ fn main() -> anyhow::Result<()> {
             tracing::info!("Downstream analysis complete. Results in: {:?}", downstream_dir);
             tracing::info!("Done.");
         }
-        Some(Commands::Msa { input, output, mode, aligner, threads, verbose }) => {
-            let filter = if verbose {
-                EnvFilter::new("debug")
-            } else {
-                EnvFilter::new("info")
-            };
-            tracing_subscriber::fmt()
-                .with_env_filter(filter)
-                .with_target(false)
-                .init();
-
+        Some(Commands::Msa { input, output, mode, aligner, threads, verbose: _ }) => {
             tracing::info!("PanMiner msa v{}", panminer::VERSION);
 
             // Validate input directory
